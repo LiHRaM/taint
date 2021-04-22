@@ -1,8 +1,7 @@
 #![feature(custom_test_frameworks)]
 #![test_runner(test_runner)]
 
-use std::path::PathBuf;
-use std::{env, path::Path};
+use std::{env, path::PathBuf};
 
 use colored::*;
 use compiletest_rs as compiletest;
