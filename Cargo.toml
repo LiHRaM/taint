@@ -1,8 +1,11 @@
 [package]
-name = "code"
+name = "taint"
 version = "0.1.0"
 authors = ["Hilmar Gústafsson <LiHRaM@users.noreply.github.com>"]
 edition = "2018"
+
+[lib]
+doctest = false
 
 [[bin]]
 name = "taint"
