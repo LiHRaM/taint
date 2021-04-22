@@ -76,10 +76,10 @@ fn get_flags(in_rustc_test_suite: bool) -> String {
     } else {
         flags.push("-Dwarnings -Dunused".to_owned());
     }
-    if let Ok(sysroot) = env::var("EXE_SYSROOT") {
+    if let Ok(sysroot) = env::var("TAINT_SYSROOT") {
         flags.push(format!("--sysroot {}", sysroot));
     }
-    if let Ok(extra_flags) = env::var("EXEFLAGS") {
+    if let Ok(extra_flags) = env::var("TAINT_FLAGS") {
         flags.push(extra_flags);
     }
     let flags = flags.join(" ");
@@ -96,10 +96,6 @@ fn get_config(
     let mut config = compiletest::Config::default().tempdir();
     config.mode = mode;
     config.rustc_path = rustc_path();
-    if let Some(lib_path) = option_env!("RUSTC_LIB_PATH") {
-        config.run_lib_path = PathBuf::from(lib_path);
-        config.compile_lib_path = PathBuf::from(lib_path);
-    }
     config.filters = env::args().nth(1).into_iter().collect();
     config.host = get_host();
     config.src_base = PathBuf::from(path);
