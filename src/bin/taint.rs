@@ -11,6 +11,7 @@ use rustc_driver::Compilation;
 use rustc_errors::{emitter::HumanReadableErrorType, ColorConfig};
 use rustc_hir::def_id::LOCAL_CRATE;
 use rustc_session::config::ErrorOutputType;
+use std::convert::TryFrom;
 
 fn main() {
     rustc_driver::install_ice_hook();
@@ -66,7 +67,7 @@ impl rustc_driver::Callbacks for TaintCompilerCallbacks {
         compiler.session().abort_if_errors();
 
         queries.global_ctxt().unwrap().peek_mut().enter(|tcx| {
-            let (_entry_def_id, _) = if let Some((entry_def, x)) = tcx.entry_fn(LOCAL_CRATE) {
+            let (entry_def_id, _) = if let Some((entry_def, x)) = tcx.entry_fn(LOCAL_CRATE) {
                 (entry_def, x)
             } else {
                 let output_ty = ErrorOutputType::HumanReadable(HumanReadableErrorType::Default(
@@ -78,11 +79,15 @@ impl rustc_driver::Callbacks for TaintCompilerCallbacks {
                 );
             };
 
-            // if let Some(return_code) = taint::eval_main(tcx, entry_def_id.to_def_id()) {
-            //     std::process::exit(
-            //         i32::try_from(return_code).expect("Return value was too large!"),
-            //     );
-            // }
+            if let Some(return_code) = taint::eval::eval_main(
+                tcx,
+                entry_def_id.to_def_id(),
+                taint::eval::TaintConfig::default(),
+            ) {
+                std::process::exit(
+                    i32::try_from(return_code).expect("Return value was too large!"),
+                );
+            }
         });
 
         compiler.session().abort_if_errors();

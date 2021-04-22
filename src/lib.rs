@@ -14,3 +14,5 @@ extern crate rustc_span;
 extern crate rustc_target;
 
 mod analysis;
+
+pub mod eval;
