@@ -7,6 +7,7 @@ edition = "2018"
 [[bin]]
 name = "taint"
 path = "src/bin/taint.rs"
+test = false
 
 [dependencies]
 
