@@ -1,9 +1,9 @@
 fn main() {
-    let val = is_safe();
+    let val = input();
     output(val);
 }
 
-fn is_safe() -> i32 {
+fn input() -> i32 {
     15
 }
 

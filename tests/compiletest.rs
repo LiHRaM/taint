@@ -22,14 +22,14 @@ fn get_target() -> String {
 }
 
 fn get_host() -> String {
-    let command = std::process::Command::new(rustc_path());
+    let command = std::process::Command::new(taint_driver_path());
     let version_meta = rustc_version::VersionMeta::for_command(command)
         .expect("failed to parse rustc version info");
     version_meta.host
 }
 
-fn rustc_path() -> PathBuf {
-    PathBuf::from(option_env!("RUSTC_PATH").unwrap_or("rustc".into()))
+fn taint_driver_path() -> PathBuf {
+    PathBuf::from(option_env!("RUSTC_PATH").unwrap_or("target/debug/taint"))
 }
 
 fn passes(path: &str, target: &str) {
@@ -94,7 +94,7 @@ fn get_config(
 ) -> compiletest::common::ConfigWithTemp {
     let mut config = compiletest::Config::default().tempdir();
     config.mode = mode;
-    config.rustc_path = rustc_path();
+    config.rustc_path = taint_driver_path();
     config.filters = env::args().nth(1).into_iter().collect();
     config.host = get_host();
     config.src_base = PathBuf::from(path);
