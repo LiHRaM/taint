@@ -34,7 +34,7 @@ fi
 # Install and setup new toolchain.
 rustup toolchain uninstall taint
 rustup-toolchain-install-master -n taint -c rust-src -c rustc-dev -c llvm-tools -c rustfmt -c rust-analyzer -- "$NEW_COMMIT"
-rustup override set taint
+# rustup override set taint
 
 # Cleanup.
 cargo clean
