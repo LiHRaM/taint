@@ -22,5 +22,5 @@ pub fn eval_main(tcx: TyCtxt<'_>, main_id: DefId, config: TaintConfig) -> Option
     let analysis = MaybeTaintedLocals::new(tcx.sess);
     let mut _results = analysis.into_engine(tcx, body).iterate_to_fixpoint();
 
-    Some(0)
+    None
 }

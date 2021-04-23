@@ -1,6 +1,6 @@
 fn main() {
     let val = input();
-    output(val);
+    output(val); //~ ERROR function `output` received tainted input [T0001]
 }
 
 fn input() -> i32 {
