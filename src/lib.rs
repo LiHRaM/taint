@@ -3,8 +3,6 @@
 
 extern crate rustc_apfloat;
 extern crate rustc_ast;
-#[allow(unused_imports)]
-#[macro_use]
 extern crate rustc_middle;
 extern crate rustc_data_structures;
 extern crate rustc_errors;
