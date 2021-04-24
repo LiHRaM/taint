@@ -7,7 +7,10 @@ use rustc_mir::dataflow::{AnalysisDomain, Forward, GenKill, GenKillAnalysis};
 use rustc_session::Session;
 use rustc_span::Span;
 
+use extensions::GenKillBitSetExt;
+
 mod errors;
+mod extensions;
 
 /// A dataflow analysis that tracks whether a value may carry a taint.
 ///
@@ -77,14 +80,14 @@ impl<'tcx> GenKillAnalysis<'tcx> for MaybeTaintedLocals<'tcx> {
 impl<'a> MaybeTaintedLocals<'a> {
     fn transfer_function<T>(&'a self, trans: &'a mut T) -> TransferFunction<'a, T> {
         TransferFunction {
-            trans,
+            domain: trans,
             sess: self.sess,
         }
     }
 }
 
 struct TransferFunction<'a, T> {
-    trans: &'a mut T,
+    domain: &'a mut T,
     sess: &'a Session,
 }
 
@@ -92,58 +95,40 @@ impl<'a, T> TransferFunction<'a, T>
 where
     T: GenKill<Local>,
 {
-    fn propagate(&mut self, old: Local, new: Local) {
-        if self.is_tainted(old) {
-            self.trans.gen(new);
-        } else {
-            self.trans.kill(new);
-        }
-    }
-
-    fn is_tainted(&mut self, elem: Local) -> bool {
-        let set = self.get_set();
-        set.contains(elem)
-    }
-
-    /// Forget you ever saw this
-    fn get_set(&mut self) -> &BitSet<Local> {
-        unsafe { &*(self.trans as *mut T as *const BitSet<Local>) }
-    }
-
     fn handle_assignment(&mut self, assignment: &(Place, Rvalue)) {
         let (target, ref rval) = *assignment;
         match rval {
             // If we assign a constant to a place, the place is clean.
-            Rvalue::Use(Operand::Constant(_)) => self.trans.kill(target.local),
+            Rvalue::Use(Operand::Constant(_)) => self.domain.kill(target.local),
 
             // Otherwise we propagate the taint
             Rvalue::Use(Operand::Copy(f) | Operand::Move(f)) => {
-                self.propagate(f.local, target.local);
+                self.domain.propagate(f.local, target.local);
             }
 
             Rvalue::BinaryOp(_, ref b) => {
                 let (ref o1, ref o2) = **b;
                 match (o1, o2) {
-                    (Operand::Constant(_), Operand::Constant(_)) => self.trans.kill(target.local),
+                    (Operand::Constant(_), Operand::Constant(_)) => self.domain.kill(target.local),
                     (Operand::Copy(a) | Operand::Move(a), Operand::Copy(b) | Operand::Move(b)) => {
-                        if self.is_tainted(a.local) || self.is_tainted(b.local) {
-                            self.trans.gen(target.local);
+                        if self.domain.is_tainted(a.local) || self.domain.is_tainted(b.local) {
+                            self.domain.gen(target.local);
                         } else {
-                            self.trans.kill(target.local);
+                            self.domain.kill(target.local);
                         }
                     }
                     (Operand::Copy(p) | Operand::Move(p), Operand::Constant(_))
                     | (Operand::Constant(_), Operand::Copy(p) | Operand::Move(p)) => {
-                        if self.is_tainted(p.local) {
-                            self.trans.gen(target.local);
+                        if self.domain.is_tainted(p.local) {
+                            self.domain.gen(target.local);
                         } else {
-                            self.trans.kill(target.local);
+                            self.domain.kill(target.local);
                         }
                     }
                 }
             }
             Rvalue::UnaryOp(_, Operand::Move(p) | Operand::Copy(p)) => {
-                self.propagate(p.local, target.local);
+                self.domain.propagate(p.local, target.local);
             }
             _ => {}
         }
@@ -164,7 +149,7 @@ where
         // Sources taint their output
         if name.starts_with("input") {
             if let Some((place, _)) = destination {
-                self.trans.gen(place.local);
+                self.domain.gen(place.local);
             }
         }
 
@@ -172,7 +157,7 @@ where
             && _args
                 .iter()
                 .map(|op| op.place().unwrap().local)
-                .any(|el| self.is_tainted(el))
+                .any(|el| self.domain.is_tainted(el))
         {
             self.sess.emit_err(errors::TaintedSink {
                 fn_name: name,
@@ -220,25 +205,3 @@ where
         }
     }
 }
-
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-
-//     #[test]
-//     fn propagate() {
-//         let one = Local::from_u32(1);
-//         let two = Local::from_u32(2);
-//         let three = Local::from_u32(3);
-//         let mut set: BitSet<Local> = BitSet::new_empty(4);
-//         set.insert(one);
-
-//         let mut trans = TransferFunction { trans: &mut set };
-
-//         trans.propagate(one, two);
-//         trans.propagate(three, one);
-
-//         assert!(set.contains(two));
-//         assert!(!set.contains(one));
-//     }
-// }

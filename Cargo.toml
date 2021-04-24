@@ -6,7 +6,6 @@ edition = "2018"
 
 [lib]
 doctest = false
-test = false
 
 [[bin]]
 name = "taint"
