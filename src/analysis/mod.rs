@@ -17,12 +17,12 @@ mod extensions;
 /// Taints are introduced through sources, and consumed by sinks.
 /// Ideally, a sink never consumes a tainted value - this should result in an error.
 pub struct MaybeTaintedLocals<'sess> {
-    sess: &'sess Session,
+    session: &'sess Session,
 }
 
 impl<'sess> MaybeTaintedLocals<'sess> {
-    pub fn new(sess: &'sess Session) -> Self {
-        MaybeTaintedLocals { sess }
+    pub fn new(session: &'sess Session) -> Self {
+        MaybeTaintedLocals { session }
     }
 }
 
@@ -78,17 +78,17 @@ impl<'tcx> GenKillAnalysis<'tcx> for MaybeTaintedLocals<'tcx> {
 }
 
 impl<'a> MaybeTaintedLocals<'a> {
-    fn transfer_function<T>(&'a self, trans: &'a mut T) -> TransferFunction<'a, T> {
+    fn transfer_function<T>(&'a self, domain: &'a mut T) -> TransferFunction<'a, T> {
         TransferFunction {
-            domain: trans,
-            sess: self.sess,
+            domain,
+            session: self.session,
         }
     }
 }
 
 struct TransferFunction<'a, T> {
     domain: &'a mut T,
-    sess: &'a Session,
+    session: &'a Session,
 }
 
 impl<'a, T> TransferFunction<'a, T>
@@ -159,7 +159,7 @@ where
                 .map(|op| op.place().unwrap().local)
                 .any(|el| self.domain.is_tainted(el))
         {
-            self.sess.emit_err(errors::TaintedSink {
+            self.session.emit_err(errors::TaintedSink {
                 fn_name: name,
                 span: *span,
             });
