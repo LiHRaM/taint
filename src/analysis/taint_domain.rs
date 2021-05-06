@@ -1,0 +1,69 @@
+//! The Rust compiler library does not support reading the domain during a GenKill analysis.
+//! We work around that here by implementing a trait which converts `GenKill<Local>` into `BitSet<Local>`,
+//! which exposes the methods we need to be able to propagate the taint.
+
+use rustc_index::{bit_set::BitSet, vec::Idx};
+
+pub(crate) trait TaintDomain<T: Idx> {
+    fn propagate(&mut self, old: T, new: T);
+    fn is_tainted(&self, elem: T) -> bool;
+    fn mark_tainted(&mut self, ix: T);
+    fn mark_untainted(&mut self, ix: T);
+}
+
+impl<T: Idx> TaintDomain<T> for BitSet<T> {
+    fn propagate(&mut self, old: T, new: T) {
+        if self.is_tainted(old) {
+            self.mark_tainted(new);
+        } else {
+            self.mark_untainted(new);
+        }
+    }
+
+    fn is_tainted(&self, elem: T) -> bool {
+        self.contains(elem)
+    }
+
+    fn mark_tainted(&mut self, ix: T) {
+        self.insert(ix);
+    }
+
+    fn mark_untainted(&mut self, ix: T) {
+        self.remove(ix);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rustc_middle::mir::Local;
+
+    use super::*;
+
+    const ONE: Local = Local::from_u32(1);
+    const TWO: Local = Local::from_u32(2);
+    const THREE: Local = Local::from_u32(3);
+
+    #[test]
+    fn propagate() {
+        let mut set: BitSet<Local> = BitSet::new_empty(4);
+
+        // Taint the first element
+        set.mark_tainted(ONE);
+
+        // Propagate the taint through the domain
+
+        // Domain
+        // [_1, _2]
+        set.propagate(ONE, TWO);
+
+        // Domain
+        // [_2]
+        set.propagate(THREE, ONE);
+
+        // TWO should be tainted.
+        assert!(set.is_tainted(TWO));
+
+        // One should not be tainted.
+        assert!(!set.is_tainted(ONE));
+    }
+}

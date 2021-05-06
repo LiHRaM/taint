@@ -1,4 +1,4 @@
 pub mod taint_analysis;
 
 mod errors;
-mod extensions;
+mod taint_domain;
