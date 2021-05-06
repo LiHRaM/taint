@@ -9,7 +9,7 @@ doctest = false
 
 [[bin]]
 name = "taint"
-path = "src/bin/driver.rs"
+path = "src/bins/driver.rs"
 test = false
 
 [dependencies]
