@@ -2,7 +2,8 @@ use rustc_hir::def_id::{DefId, LOCAL_CRATE};
 use rustc_middle::{mir::Body, ty::TyCtxt};
 use rustc_mir::dataflow::Analysis;
 
-use crate::{analysis::taint_analysis::TaintAnalysis, Summary, TaintProperty};
+use crate::analysis::taint_analysis::TaintAnalysis;
+use crate::{Infer, Mark, Summary, TaintType};
 
 pub struct TaintConfig {
     pub ownership: bool,
@@ -28,24 +29,21 @@ pub fn eval_main(tcx: TyCtxt<'_>, main_id: DefId, config: TaintConfig) -> Option
     let summaries: Vec<Summary> = vec![
         Summary {
             name: "output",
-            is_source: TaintProperty::Never,
-            is_sink: TaintProperty::Always,
+            taint_type: TaintType::Marked(Mark::Sink),
         },
         Summary {
             name: "input",
-            is_source: TaintProperty::Always,
-            is_sink: TaintProperty::Never,
+            taint_type: TaintType::Marked(Mark::Source),
         },
         Summary {
             name: "seems_safe",
-            is_source: TaintProperty::Always,
-            is_sink: TaintProperty::Never,
+            taint_type: TaintType::Inferred(Infer::Source),
         },
     ];
 
     let body: &Body = tcx.optimized_mir(main_id);
 
-    let analysis = TaintAnalysis::new(tcx.sess, summaries);
+    let analysis = TaintAnalysis::new(tcx.sess, &summaries);
     let mut _results = analysis.into_engine(tcx, body).iterate_to_fixpoint();
 
     None

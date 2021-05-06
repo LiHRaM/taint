@@ -5,22 +5,25 @@
 pub struct Summary<'tcx> {
     /// The function name.
     pub name: &'tcx str,
-    /// Whether this function returns a tainted value.
-    pub is_source: TaintProperty,
-    /// Whether this function passes a value to a sink.
-    pub is_sink: TaintProperty,
+    pub taint_type: TaintType,
 }
 
-/// An element of a function signature.
-///
-/// For example, it could signify whether a function returns a taint.
 #[derive(Clone, Debug, PartialEq)]
-pub enum TaintProperty {
-    /// This property never holds.
-    Never,
-    /// This property always holds.
-    Always,
-    /// This property is influenced function parameters,
-    /// who are identified by index in the inner vector.
-    Sometimes(Vec<usize>),
+pub enum TaintType {
+    Marked(Mark),
+    Inferred(Infer),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Mark {
+    Source,
+    Sink,
+    Sanitizer,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Infer {
+    Source,
+    Sink,
+    Sanitizer,
 }

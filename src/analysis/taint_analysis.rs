@@ -1,4 +1,4 @@
-use crate::{Summary, TaintProperty};
+use crate::{Infer, Mark, Summary, TaintType};
 
 use rustc_index::bit_set::BitSet;
 use rustc_middle::mir::{
@@ -16,18 +16,18 @@ use super::taint_domain::TaintDomain;
 ///
 /// Taints are introduced through sources, and consumed by sinks.
 /// Ideally, a sink never consumes a tainted value - this should result in an error.
-pub struct TaintAnalysis<'sess> {
-    session: &'sess Session,
-    summaries: Vec<Summary<'sess>>,
+pub struct TaintAnalysis<'tcx, 'analysis> {
+    session: &'tcx Session,
+    summaries: &'analysis [Summary<'tcx>],
 }
 
-impl<'sess> TaintAnalysis<'sess> {
-    pub fn new(session: &'sess Session, summaries: Vec<Summary<'sess>>) -> Self {
+impl<'tcx, 'analysis> TaintAnalysis<'tcx, 'analysis> {
+    pub fn new(session: &'tcx Session, summaries: &'analysis [Summary<'tcx>]) -> Self {
         TaintAnalysis { session, summaries }
     }
 }
 
-impl<'tcx> AnalysisDomain<'tcx> for TaintAnalysis<'tcx> {
+impl<'tcx, 'analysis> AnalysisDomain<'tcx> for TaintAnalysis<'tcx, 'analysis> {
     type Domain = BitSet<Local>;
     const NAME: &'static str = "TaintAnalysis";
 
@@ -43,7 +43,7 @@ impl<'tcx> AnalysisDomain<'tcx> for TaintAnalysis<'tcx> {
     }
 }
 
-impl<'tcx> Analysis<'tcx> for TaintAnalysis<'tcx> {
+impl<'tcx, 'analysis> Analysis<'tcx> for TaintAnalysis<'tcx, 'analysis> {
     fn apply_statement_effect(
         &self,
         state: &mut Self::Domain,
@@ -76,23 +76,28 @@ impl<'tcx> Analysis<'tcx> for TaintAnalysis<'tcx> {
     }
 }
 
-impl<'tcx> TaintAnalysis<'tcx> {
-    fn transfer_function<T>(&'tcx self, state: &'tcx mut T) -> TransferFunction<'tcx, T> {
+impl<'tcx, 'analysis> TaintAnalysis<'tcx, 'analysis> {
+    fn transfer_function<T>(
+        &'tcx self,
+        state: &'tcx mut T,
+    ) -> TransferFunction<'tcx, 'analysis, T> {
         TransferFunction {
             state,
             session: self.session,
-            summaries: self.summaries.clone(),
+            summaries: self.summaries,
         }
     }
 }
 
-struct TransferFunction<'tcx, T> {
+struct TransferFunction<'tcx, 'analysis, T> {
     state: &'tcx mut T,
     session: &'tcx Session,
-    summaries: Vec<Summary<'tcx>>,
+    summaries: &'analysis [Summary<'tcx>],
 }
 
-impl<'tcx, T: TaintDomain<Local>> Visitor<'tcx> for TransferFunction<'_, T> {
+impl<'tcx, 'analysis, T: TaintDomain<Local>> Visitor<'tcx>
+    for TransferFunction<'tcx, 'analysis, T>
+{
     fn visit_statement(&mut self, statement: &Statement<'tcx>, _: Location) {
         let Statement { source_info, kind } = statement;
 
@@ -130,7 +135,7 @@ impl<'tcx, T: TaintDomain<Local>> Visitor<'tcx> for TransferFunction<'_, T> {
     }
 }
 
-impl<'tcx, T> TransferFunction<'tcx, T>
+impl<'tcx, 'analysis, T> TransferFunction<'tcx, 'analysis, T>
 where
     Self: Visitor<'tcx>,
     T: TaintDomain<Local>,
@@ -189,29 +194,16 @@ where
             .expect("Operand is not a function")
             .to_string();
 
-        if let Some((is_source, is_sink)) =
-            if let Some(summary) = self.summaries.iter().find(|x| name == x.name) {
-                let Summary {
-                    is_source: taints,
-                    is_sink: sink,
-                    ..
-                } = summary;
-                Some((taints.to_owned(), sink.to_owned()))
-            } else {
-                None
-            }
-        {
-            // dbg!((&name, &is_source, &is_sink));
-            match is_source {
-                TaintProperty::Never => {}
-                TaintProperty::Always => self.t_visit_source_destination(destination),
-                TaintProperty::Sometimes(_) => {}
-            }
-
-            match is_sink {
-                TaintProperty::Never => {}
-                TaintProperty::Always => self.t_visit_sink(name, args, span),
-                TaintProperty::Sometimes(_) => {}
+        if let Some(summary) = self.summaries.iter().find(|x| name == x.name) {
+            let Summary { taint_type, .. } = summary;
+            match taint_type {
+                TaintType::Marked(Mark::Sink) | TaintType::Inferred(Infer::Sink) => {
+                    self.t_visit_sink(name, args, span);
+                }
+                TaintType::Marked(Mark::Source) | TaintType::Inferred(Infer::Source) => {
+                    self.t_visit_source_destination(destination);
+                }
+                _ => {}
             }
         }
     }
