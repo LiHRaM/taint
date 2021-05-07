@@ -94,11 +94,13 @@ fn get_config(
 ) -> compiletest::common::ConfigWithTemp {
     let mut config = compiletest::Config::default().tempdir();
     config.mode = mode;
+    config.src_base = PathBuf::from(path);
     config.rustc_path = taint_driver_path();
     config.filters = env::args().nth(1).into_iter().collect();
     config.host = get_host();
-    config.src_base = PathBuf::from(path);
     config.target = target.to_owned();
     config.target_rustcflags = Some(flags);
+    config.link_deps();
+    config.clean_rmeta();
     config
 }

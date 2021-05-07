@@ -21,4 +21,5 @@ mod summaries;
 pub mod eval;
 
 pub use analysis::*;
+pub use annotations::*;
 pub use summaries::*;

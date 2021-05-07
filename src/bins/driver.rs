@@ -115,4 +115,22 @@ impl rustc_driver::Callbacks for TaintCompilerCallbacks {
 
         Compilation::Stop
     }
+
+    fn config(&mut self, _config: &mut rustc_interface::Config) {}
+
+    fn after_parsing<'tcx>(
+        &mut self,
+        _compiler: &rustc_interface::interface::Compiler,
+        _queries: &'tcx rustc_interface::Queries<'tcx>,
+    ) -> Compilation {
+        Compilation::Continue
+    }
+
+    fn after_expansion<'tcx>(
+        &mut self,
+        _compiler: &rustc_interface::interface::Compiler,
+        _queries: &'tcx rustc_interface::Queries<'tcx>,
+    ) -> Compilation {
+        Compilation::Continue
+    }
 }
