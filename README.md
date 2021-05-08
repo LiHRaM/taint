@@ -5,11 +5,10 @@ This project uses the Rust compiler to implement a taint analysis, hooking into 
 ## Setting up:
 
 We use compiler internals through `#![feature(rustc_private)]`.
-For now, we only support using the `rustup-toolchain` command at the root of this workspace.
-It installs a custom toolchain with the necessary components to compile and run the taint binary.
+To use those compiler internals, we must use the nightly toolchain, with some additional components.
+These are all defined in the "rust-toolchain" file, and automatically recognised by cargo.
 
 To test that the binary correctly hooks into and runs the compiler, run the following command:
-
 ```
 cargo test
 ```
@@ -20,5 +19,3 @@ cargo test
 
 - https://rustc-dev-guide.rust-lang.org/rustc-driver.html
 - https://doc.rust-lang.org/nightly/nightly-rustc/rustc_interface/index.html
-
-Since `rustc_interface` is unstable, we need to make sure that the compiler toolchain being used is the one that is supported.
