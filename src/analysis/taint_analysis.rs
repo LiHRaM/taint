@@ -138,8 +138,8 @@ where
     fn t_visit_assign(&mut self, place: &Place, rvalue: &Rvalue) {
         match rvalue {
             // If we assign a constant to a place, the place is clean.
-            Rvalue::Use(Operand::Constant(_)) => {
-                self.state.mark_tainted(place.local);
+            Rvalue::Use(Operand::Constant(_)) | Rvalue::UnaryOp(_, Operand::Constant(_)) => {
+                self.state.mark_untainted(place.local)
             }
 
             // Otherwise we propagate the taint
@@ -162,18 +162,24 @@ where
                     }
                     (Operand::Copy(p) | Operand::Move(p), Operand::Constant(_))
                     | (Operand::Constant(_), Operand::Copy(p) | Operand::Move(p)) => {
-                        if self.state.is_tainted(p.local) {
-                            self.state.mark_tainted(place.local);
-                        } else {
-                            self.state.mark_untainted(place.local);
-                        }
+                        self.state.propagate(p.local, place.local);
                     }
                 }
             }
             Rvalue::UnaryOp(_, Operand::Move(p) | Operand::Copy(p)) => {
                 self.state.propagate(p.local, place.local);
             }
-            _ => {}
+
+            Rvalue::Repeat(_, _) => {}
+            Rvalue::Ref(_, _, _) => {}
+            Rvalue::ThreadLocalRef(_) => {}
+            Rvalue::AddressOf(_, _) => {}
+            Rvalue::Len(_) => {}
+            Rvalue::Cast(_, _, _) => {}
+            Rvalue::CheckedBinaryOp(_, _) => {}
+            Rvalue::NullaryOp(_, _) => {}
+            Rvalue::Discriminant(_) => {}
+            Rvalue::Aggregate(_, _) => {}
         }
     }
 
@@ -201,7 +207,6 @@ where
                 None
             }
         {
-            // dbg!((&name, &is_source, &is_sink));
             match is_source {
                 TaintProperty::Never => {}
                 TaintProperty::Always => self.t_visit_source_destination(destination),
@@ -223,11 +228,13 @@ where
     }
 
     fn t_visit_sink(&mut self, name: String, args: &[Operand], span: &Span) {
-        if args
-            .iter()
-            .map(|op| op.place().unwrap().local)
-            .any(|el| self.state.is_tainted(el))
-        {
+        if args.iter().map(|op| op.place()).any(|el| {
+            if let Some(place) = el {
+                self.state.is_tainted(place.local)
+            } else {
+                false
+            }
+        }) {
             self.session.emit_err(super::errors::TaintedSink {
                 fn_name: name,
                 span: *span,
