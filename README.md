@@ -5,6 +5,8 @@ This project uses the Rust compiler to implement a taint analysis, hooking into 
 ## Setting up:
 
 We use compiler internals through `#![feature(rustc_private)]`.
+To use those compiler internals, we must use the nightly toolchain, with some additional components.
+These are all defined in the "rust-toolchain" file, and automatically recognised by cargo.
 
 To test that the binary correctly hooks into and runs the compiler, run the following command:
 ```
