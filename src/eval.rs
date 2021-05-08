@@ -5,6 +5,7 @@ use rustc_mir::dataflow::Analysis;
 use crate::{analysis::taint_analysis::TaintAnalysis, Summary, TaintProperty};
 
 pub struct TaintConfig {
+    // Controls if the ownership extension of our analysis is used or not.
     pub ownership: bool,
 }
 
