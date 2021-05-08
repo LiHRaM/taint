@@ -1,6 +1,4 @@
-//! The Rust compiler library does not support reading the domain during a GenKill analysis.
-//! We work around that here by implementing a trait which converts `GenKill<Local>` into `BitSet<Local>`,
-//! which exposes the methods we need to be able to propagate the taint.
+//! A trait to constrain the domain operations to taint analysis.
 
 use rustc_index::{bit_set::BitSet, vec::Idx};
 
