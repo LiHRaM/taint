@@ -18,6 +18,6 @@ fn input() -> i32 {
     4
 }
 
-fn output<T>(_: T) {
+fn output(_: i32) {
     ()
 }
