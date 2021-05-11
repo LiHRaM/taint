@@ -156,25 +156,22 @@ where
                 self.state.propagate(f.local, place.local);
             }
 
-            Rvalue::BinaryOp(_, ref b) => {
-                let (ref o1, ref o2) = **b;
-                match (o1, o2) {
-                    (Operand::Constant(_), Operand::Constant(_)) => {
+            Rvalue::BinaryOp(_, box b) | Rvalue::CheckedBinaryOp(_, box b) => match b {
+                (Operand::Constant(_), Operand::Constant(_)) => {
+                    self.state.mark_untainted(place.local);
+                }
+                (Operand::Copy(a) | Operand::Move(a), Operand::Copy(b) | Operand::Move(b)) => {
+                    if self.state.is_tainted(a.local) || self.state.is_tainted(b.local) {
+                        self.state.mark_tainted(place.local);
+                    } else {
                         self.state.mark_untainted(place.local);
                     }
-                    (Operand::Copy(a) | Operand::Move(a), Operand::Copy(b) | Operand::Move(b)) => {
-                        if self.state.is_tainted(a.local) || self.state.is_tainted(b.local) {
-                            self.state.mark_tainted(place.local);
-                        } else {
-                            self.state.mark_untainted(place.local);
-                        }
-                    }
-                    (Operand::Copy(p) | Operand::Move(p), Operand::Constant(_))
-                    | (Operand::Constant(_), Operand::Copy(p) | Operand::Move(p)) => {
-                        self.state.propagate(p.local, place.local);
-                    }
                 }
-            }
+                (Operand::Copy(p) | Operand::Move(p), Operand::Constant(_))
+                | (Operand::Constant(_), Operand::Copy(p) | Operand::Move(p)) => {
+                    self.state.propagate(p.local, place.local);
+                }
+            },
             Rvalue::UnaryOp(_, Operand::Move(p) | Operand::Copy(p)) => {
                 self.state.propagate(p.local, place.local);
             }
@@ -185,7 +182,6 @@ where
             Rvalue::AddressOf(_, _) => {}
             Rvalue::Len(_) => {}
             Rvalue::Cast(_, _, _) => {}
-            Rvalue::CheckedBinaryOp(_, _) => {}
             Rvalue::NullaryOp(_, _) => {}
             Rvalue::Discriminant(_) => {}
             Rvalue::Aggregate(_, _) => {}
