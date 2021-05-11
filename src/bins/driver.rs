@@ -28,11 +28,21 @@ fn main() {
     run_compiler(rustc_args, &mut TaintCompilerCallbacks)
 }
 
+/// We want our own tracing to debug the taint analysis.
+/// Enable tracing via the `TAINT_LOG` environment variable.
+///
+/// Example: `TAINT_LOG=INFO cargo run -- tests/fails/simple.rs`
+///
+/// It is configured for minimal hassle.
+/// It logs when functions marked with `#[instrument]` are entered,
+/// and does not require any further code (such as the `event!` macro
+/// provided by `tracing`).
 fn init_tracing() {
     if let Ok(filter) = EnvFilter::try_from_env("TAINT_LOG") {
         tracing_subscriber::fmt()
             .with_span_events(FmtSpan::ENTER)
             .with_env_filter(filter)
+            .without_time()
             .init();
     }
 }
