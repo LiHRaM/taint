@@ -1,6 +1,7 @@
 //! A trait to constrain the domain operations to taint analysis.
 
 use rustc_index::{bit_set::BitSet, vec::Idx};
+use tracing::instrument;
 
 pub(crate) trait TaintDomain<T: Idx> {
     fn propagate(&mut self, old: T, new: T);
@@ -10,6 +11,7 @@ pub(crate) trait TaintDomain<T: Idx> {
 }
 
 impl<T: Idx> TaintDomain<T> for BitSet<T> {
+    #[instrument]
     fn propagate(&mut self, old: T, new: T) {
         if self.is_tainted(old) {
             self.mark_tainted(new);
@@ -18,14 +20,17 @@ impl<T: Idx> TaintDomain<T> for BitSet<T> {
         }
     }
 
+    #[instrument]
     fn is_tainted(&self, elem: T) -> bool {
         self.contains(elem)
     }
 
+    #[instrument]
     fn mark_tainted(&mut self, ix: T) {
         self.insert(ix);
     }
 
+    #[instrument]
     fn mark_untainted(&mut self, ix: T) {
         self.remove(ix);
     }

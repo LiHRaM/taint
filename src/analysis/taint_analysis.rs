@@ -10,6 +10,8 @@ use rustc_mir::dataflow::{Analysis, AnalysisDomain, Forward};
 use rustc_session::Session;
 use rustc_span::Span;
 
+use tracing::instrument;
+
 use super::taint_domain::TaintDomain;
 
 /// A dataflow analysis that tracks whether a value may carry a taint.
@@ -92,7 +94,13 @@ struct TransferFunction<'tcx, T> {
     summaries: Vec<Summary<'tcx>>,
 }
 
-impl<'tcx, T: TaintDomain<Local>> Visitor<'tcx> for TransferFunction<'_, T> {
+impl<'tcx, T: std::fmt::Debug> std::fmt::Debug for TransferFunction<'tcx, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("{:?}", &self.state))
+    }
+}
+
+impl<'tcx, T: TaintDomain<Local> + std::fmt::Debug> Visitor<'tcx> for TransferFunction<'_, T> {
     fn visit_statement(&mut self, statement: &Statement<'tcx>, _: Location) {
         let Statement { source_info, kind } = statement;
 
@@ -133,8 +141,9 @@ impl<'tcx, T: TaintDomain<Local>> Visitor<'tcx> for TransferFunction<'_, T> {
 impl<'tcx, T> TransferFunction<'tcx, T>
 where
     Self: Visitor<'tcx>,
-    T: TaintDomain<Local>,
+    T: TaintDomain<Local> + std::fmt::Debug,
 {
+    #[instrument]
     fn t_visit_assign(&mut self, place: &Place, rvalue: &Rvalue) {
         match rvalue {
             // If we assign a constant to a place, the place is clean.
@@ -183,6 +192,7 @@ where
         }
     }
 
+    #[instrument]
     fn t_visit_call(
         &mut self,
         func: &Operand,
