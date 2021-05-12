@@ -12,10 +12,12 @@ use rustc_errors::{emitter::HumanReadableErrorType, ColorConfig};
 use rustc_hir::def_id::LOCAL_CRATE;
 use rustc_session::config::ErrorOutputType;
 use std::convert::TryFrom;
+use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
 
 fn main() {
     rustc_driver::install_ice_hook();
     rustc_driver::init_rustc_env_logger();
+    init_tracing();
 
     let mut rustc_args: Vec<String> = vec![];
 
@@ -24,6 +26,25 @@ fn main() {
     }
 
     run_compiler(rustc_args, &mut TaintCompilerCallbacks)
+}
+
+/// We want our own tracing to debug the taint analysis.
+/// Enable tracing via the `TAINT_LOG` environment variable.
+///
+/// Example: `TAINT_LOG=INFO cargo run -- tests/fails/simple.rs`
+///
+/// It is configured for minimal hassle.
+/// It logs when functions marked with `#[instrument]` are entered,
+/// and does not require any further code (such as the `event!` macro
+/// provided by `tracing`).
+fn init_tracing() {
+    if let Ok(filter) = EnvFilter::try_from_env("TAINT_LOG") {
+        tracing_subscriber::fmt()
+            .with_span_events(FmtSpan::ENTER)
+            .with_env_filter(filter)
+            .without_time()
+            .init();
+    }
 }
 
 fn run_compiler(mut args: Vec<String>, callbacks: &mut (dyn rustc_driver::Callbacks + Send)) -> ! {
