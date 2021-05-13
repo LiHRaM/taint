@@ -19,11 +19,7 @@ fn main() {
     rustc_driver::init_rustc_env_logger();
     init_tracing();
 
-    let mut rustc_args: Vec<String> = vec![];
-
-    for arg in std::env::args() {
-        rustc_args.push(arg);
-    }
+    let rustc_args: Vec<String> = std::env::args().collect();
 
     run_compiler(rustc_args, &mut TaintCompilerCallbacks)
 }
