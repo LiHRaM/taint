@@ -1,6 +1,5 @@
-extern crate taint;
-
-use taint::{sink, source};
+#![feature(register_tool)]
+#![register_tool(taint)]
 
 fn main() {
     let val = seems_safe();
@@ -11,10 +10,10 @@ fn seems_safe() -> i32 {
     input()
 }
 
-#[source]
+#[taint::source]
 fn input() -> i32 {
     15
 }
 
-#[sink]
+#[taint::sink]
 fn output(_: i32) {}

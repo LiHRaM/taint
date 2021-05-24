@@ -15,7 +15,6 @@ test = false
 [dependencies]
 tracing = "0.1"
 tracing-subscriber = { version = "0.2.18", features = ["env-filter"] }
-annotations = { path = "annotations" }
 
 # A noop dependency that changes in the Rust repository, it's a bit of a hack.
 # See the `src/tools/rustc-workspace-hack/README.md` file in `rust-lang/rust`
@@ -26,7 +25,6 @@ rustc-workspace-hack = "1.0.0"
 compiletest_rs = { version = "0.7", features = ["tmp"] }
 rustc_version = "0.3"
 colored = "2"
-annotations = { path = "annotations" }
 
 [package.metadata.rust-analyzer]
 rustc_private=true

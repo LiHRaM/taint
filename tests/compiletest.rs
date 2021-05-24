@@ -1,5 +1,4 @@
-#![feature(custom_test_frameworks)]
-#![test_runner(test_runner)]
+#![feature(test)]
 
 use std::{env, path::PathBuf};
 
@@ -7,7 +6,8 @@ use colored::*;
 use compiletest_rs as compiletest;
 use compiletest_rs::common::Mode as TestMode;
 
-fn test_runner(_tests: &[&()]) {
+#[test]
+fn test_runner() {
     env::set_var("TAINT_ENV_VAR_TEST", "0");
     env::set_var("TAINT_TEMP", env::temp_dir());
     env::set_var("RUST_BACKTRACE", "1");
@@ -100,7 +100,5 @@ fn get_config(
     config.host = get_host();
     config.target = target.to_owned();
     config.target_rustcflags = Some(flags);
-    config.link_deps();
-    config.clean_rmeta();
     config
 }

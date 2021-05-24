@@ -1,5 +1,3 @@
-use crate::{Summary, TaintProperty};
-
 use rustc_index::bit_set::BitSet;
 use rustc_middle::mir::{
     visit::Visitor, BasicBlock, Body, HasLocalDecls, Local, Location, Operand, Place, Rvalue,
@@ -12,24 +10,26 @@ use rustc_span::Span;
 
 use tracing::instrument;
 
+use crate::eval::AttrInfo;
+
 use super::taint_domain::TaintDomain;
 
 /// A dataflow analysis that tracks whether a value may carry a taint.
 ///
 /// Taints are introduced through sources, and consumed by sinks.
 /// Ideally, a sink never consumes a tainted value - this should result in an error.
-pub struct TaintAnalysis<'sess> {
-    session: &'sess Session,
-    summaries: Vec<Summary<'sess>>,
+pub struct TaintAnalysis<'tcx, 'v> {
+    session: &'tcx Session,
+    info: &'v AttrInfo,
 }
 
-impl<'sess> TaintAnalysis<'sess> {
-    pub fn new(session: &'sess Session, summaries: Vec<Summary<'sess>>) -> Self {
-        TaintAnalysis { session, summaries }
+impl<'tcx, 'v> TaintAnalysis<'tcx, 'v> {
+    pub fn new(session: &'tcx Session, info: &'v AttrInfo) -> Self {
+        TaintAnalysis { session, info }
     }
 }
 
-impl<'tcx> AnalysisDomain<'tcx> for TaintAnalysis<'tcx> {
+impl<'tcx, 'v> AnalysisDomain<'tcx> for TaintAnalysis<'tcx, 'v> {
     type Domain = BitSet<Local>;
     const NAME: &'static str = "TaintAnalysis";
 
@@ -45,14 +45,14 @@ impl<'tcx> AnalysisDomain<'tcx> for TaintAnalysis<'tcx> {
     }
 }
 
-impl<'tcx> Analysis<'tcx> for TaintAnalysis<'tcx> {
+impl<'tcx, 'v> Analysis<'tcx> for TaintAnalysis<'tcx, 'v> {
     fn apply_statement_effect(
         &self,
         state: &mut Self::Domain,
         statement: &Statement<'tcx>,
         location: Location,
     ) {
-        self.transfer_function(state)
+        self.transfer_function(state, self.info)
             .visit_statement(statement, location);
     }
 
@@ -62,7 +62,7 @@ impl<'tcx> Analysis<'tcx> for TaintAnalysis<'tcx> {
         terminator: &Terminator<'tcx>,
         location: Location,
     ) {
-        self.transfer_function(state)
+        self.transfer_function(state, self.info)
             .visit_terminator(terminator, location);
     }
 
@@ -78,20 +78,24 @@ impl<'tcx> Analysis<'tcx> for TaintAnalysis<'tcx> {
     }
 }
 
-impl<'tcx> TaintAnalysis<'tcx> {
-    fn transfer_function<T>(&'tcx self, state: &'tcx mut T) -> TransferFunction<'tcx, T> {
-        TransferFunction {
-            state,
-            session: self.session,
-            summaries: self.summaries.clone(),
-        }
-    }
-}
-
 struct TransferFunction<'tcx, T> {
     state: &'tcx mut T,
     session: &'tcx Session,
-    summaries: Vec<Summary<'tcx>>,
+    info: &'tcx AttrInfo,
+}
+
+impl<'tcx, 'v> TaintAnalysis<'tcx, 'v> {
+    fn transfer_function<T>(
+        &'tcx self,
+        state: &'tcx mut T,
+        info: &'v AttrInfo,
+    ) -> TransferFunction<'tcx, T> {
+        TransferFunction {
+            state,
+            session: self.session,
+            info: self.info,
+        }
+    }
 }
 
 impl<'tcx, T: std::fmt::Debug> std::fmt::Debug for TransferFunction<'tcx, T> {
@@ -201,30 +205,7 @@ where
             .expect("Operand is not a function")
             .to_string();
 
-        if let Some((is_source, is_sink)) =
-            if let Some(summary) = self.summaries.iter().find(|x| name == x.name) {
-                let Summary {
-                    is_source: taints,
-                    is_sink: sink,
-                    ..
-                } = summary;
-                Some((taints.to_owned(), sink.to_owned()))
-            } else {
-                None
-            }
-        {
-            match is_source {
-                TaintProperty::Never => {}
-                TaintProperty::Always => self.t_visit_source_destination(destination),
-                TaintProperty::Sometimes(_) => {}
-            }
-
-            match is_sink {
-                TaintProperty::Never => {}
-                TaintProperty::Always => self.t_visit_sink(name, args, span),
-                TaintProperty::Sometimes(_) => {}
-            }
-        }
+        // TODO(Hilmar): Check if function is source, sink or sanitizer.
     }
 
     fn t_visit_source_destination(&mut self, destination: &Option<(Place, BasicBlock)>) {
