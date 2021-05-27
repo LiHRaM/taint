@@ -69,6 +69,27 @@ pub struct AttrInfo {
     pub sanitizers: Vec<DefId>,
 }
 
+#[derive(Debug)]
+pub enum AttrInfoKind {
+    Source,
+    Sink,
+    Sanitizer,
+}
+
+impl AttrInfo {
+    pub fn get_kind(&self, id: &DefId) -> Option<AttrInfoKind> {
+        if self.sources.contains(id) {
+            Some(AttrInfoKind::Source)
+        } else if self.sinks.contains(id) {
+            Some(AttrInfoKind::Sink)
+        } else if self.sanitizers.contains(id) {
+            Some(AttrInfoKind::Sanitizer)
+        } else {
+            None
+        }
+    }
+}
+
 impl<'tcx> TaintAttributeFinder<'tcx> {
     fn new(tcx: TyCtxt<'tcx>) -> Self {
         TaintAttributeFinder {

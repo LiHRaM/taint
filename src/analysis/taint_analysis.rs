@@ -4,7 +4,7 @@ use rustc_middle::{
         visit::Visitor, BasicBlock, Body, HasLocalDecls, Local, Location, Operand, Place, Rvalue,
         Statement, StatementKind, Terminator, TerminatorKind,
     },
-    ty::TyCtxt,
+    ty::{TyCtxt, TyKind},
 };
 
 use rustc_mir::dataflow::{Analysis, AnalysisDomain, Forward};
@@ -12,7 +12,7 @@ use rustc_span::Span;
 
 use tracing::instrument;
 
-use crate::eval::AttrInfo;
+use crate::eval::{AttrInfo, AttrInfoKind};
 
 use super::taint_domain::TaintDomain;
 
@@ -141,15 +141,6 @@ where
     }
 }
 
-fn get_fn_defid<'a>(func: &'a Operand) -> Option<&'a rustc_hir::def_id::DefId> {
-    if let rustc_middle::ty::TyKind::FnDef(id, _args) = func.constant().unwrap().literal.ty().kind()
-    {
-        Some(id)
-    } else {
-        None
-    }
-}
-
 impl<'long, T> TransferFunction<'_, '_, '_, T>
 where
     Self: Visitor<'long>,
@@ -208,18 +199,21 @@ where
         destination: &Option<(Place, BasicBlock)>,
         span: &Span,
     ) {
-        let name = func
-            .constant()
-            .expect("Operand is not a function")
-            .to_string();
+        let fn_as_const = func.constant().unwrap();
+        let name = fn_as_const.to_string();
+        let id = match fn_as_const.literal.ty().kind() {
+            TyKind::FnDef(id, _args) => Some(id),
+            _ => None,
+        }
+        .unwrap();
 
-        let def_id = get_fn_defid(func).unwrap();
-        if self.info.sources.contains(def_id) {
-            self.t_visit_source_destination(destination);
-        } else if self.info.sinks.contains(def_id) {
-            self.t_visit_sink(name, args, span);
-        } else if self.info.sanitizers.contains(def_id) {
-            self.t_visit_sanitizer_destination(destination);
+        match self.info.get_kind(id) {
+            Some(AttrInfoKind::Source) => self.t_visit_source_destination(destination),
+            Some(AttrInfoKind::Sanitizer) => self.t_visit_sanitizer_destination(destination),
+            Some(AttrInfoKind::Sink) => self.t_visit_sink(name, args, span),
+            None => {
+                // TODO(Hilmar): Perform analysis
+            }
         }
     }
 
