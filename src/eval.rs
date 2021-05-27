@@ -31,7 +31,6 @@ impl<'v> ItemLikeVisitor<'v> for Finder<'_> {
             .attrs(item.hir_id())
             .iter()
             .collect::<Vec<_>>();
-        dbg!(attrs);
     }
 
     fn visit_trait_item(&mut self, _trait_item: &hir::TraitItem<'_>) {}
@@ -46,12 +45,13 @@ pub fn eval_main(tcx: TyCtxt<'_>, main_id: DefId, config: TaintConfig) -> Option
     tcx.hir().krate().visit_all_item_likes(&mut finder);
 
     let _ = config;
-    let _ = tcx.mir_keys(LOCAL_CRATE);
+    let mir_ids = tcx.mir_keys(LOCAL_CRATE);
 
     let body: &Body = tcx.optimized_mir(main_id);
 
-    let analysis = TaintAnalysis::new(tcx.sess, &finder.info);
-    let mut _results = analysis.into_engine(tcx, body).iterate_to_fixpoint();
+    let _ = TaintAnalysis::new(tcx, &finder.info)
+        .into_engine(tcx, body)
+        .iterate_to_fixpoint();
 
     None
 }
@@ -62,7 +62,7 @@ struct TaintAttributeFinder<'tcx> {
     info: AttrInfo,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct AttrInfo {
     pub sources: Vec<DefId>,
     pub sinks: Vec<DefId>,
