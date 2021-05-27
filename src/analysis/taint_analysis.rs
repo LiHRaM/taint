@@ -1,8 +1,8 @@
 use rustc_index::bit_set::BitSet;
 use rustc_middle::{
     mir::{
-        visit::Visitor, BasicBlock, Body, HasLocalDecls, Local, Location, Operand, Place, Rvalue,
-        Statement, StatementKind, Terminator, TerminatorKind,
+        visit::Visitor, BasicBlock, Body, Constant, HasLocalDecls, Local, Location, Operand, Place,
+        Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
     },
     ty::{TyCtxt, TyKind},
 };
@@ -127,13 +127,13 @@ where
             TerminatorKind::SwitchInt { .. } => {}
             TerminatorKind::Return => {}
             TerminatorKind::Call {
-                func,
+                func: Operand::Constant(ref c),
                 args,
                 destination,
                 fn_span,
                 ..
             } => {
-                self.t_visit_call(func, args, destination, fn_span);
+                self.t_visit_call(c, args, destination, fn_span);
             }
             TerminatorKind::Assert { .. } => {}
             _ => {}
@@ -194,14 +194,13 @@ where
     #[instrument]
     fn t_visit_call(
         &mut self,
-        func: &Operand,
+        func: &Constant,
         args: &[Operand],
         destination: &Option<(Place, BasicBlock)>,
         span: &Span,
     ) {
-        let fn_as_const = func.constant().unwrap();
-        let name = fn_as_const.to_string();
-        let id = match fn_as_const.literal.ty().kind() {
+        let name = func.to_string();
+        let id = match func.literal.ty().kind() {
             TyKind::FnDef(id, _args) => Some(id),
             _ => None,
         }
