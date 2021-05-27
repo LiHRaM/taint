@@ -18,28 +18,6 @@ impl Default for TaintConfig {
     }
 }
 
-struct Finder<'tcx> {
-    tcx: TyCtxt<'tcx>,
-    decls: Option<hir::HirId>,
-}
-
-impl<'v> ItemLikeVisitor<'v> for Finder<'_> {
-    fn visit_item(&mut self, item: &hir::Item<'_>) {
-        let attrs = self
-            .tcx
-            .hir()
-            .attrs(item.hir_id())
-            .iter()
-            .collect::<Vec<_>>();
-    }
-
-    fn visit_trait_item(&mut self, _trait_item: &hir::TraitItem<'_>) {}
-
-    fn visit_impl_item(&mut self, _impl_item: &hir::ImplItem<'_>) {}
-
-    fn visit_foreign_item(&mut self, _foreign_item: &hir::ForeignItem<'_>) {}
-}
-
 pub fn eval_main(tcx: TyCtxt<'_>, main_id: DefId, config: TaintConfig) -> Option<i64> {
     let mut finder = TaintAttributeFinder::new(tcx);
     tcx.hir().krate().visit_all_item_likes(&mut finder);
