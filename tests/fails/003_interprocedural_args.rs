@@ -2,12 +2,13 @@
 #![register_tool(taint)]
 
 fn main() {
-    let val = get_input();
-    output(val); //~ ERROR
+    let mut buffer = 0;
+    set_buffer(&mut buffer);
+    output(buffer); //~ ERROR
 }
 
-fn get_input() -> i32 {
-    input()
+fn set_buffer(buffer: &mut i32) {
+    *buffer = input();
 }
 
 #[taint::source]

@@ -1,8 +1,6 @@
 #![feature(rustc_private)]
 #![feature(box_syntax)]
 #![feature(box_patterns)]
-#![allow(dead_code)]
-#![allow(unused_variables)]
 
 extern crate rustc_apfloat;
 extern crate rustc_ast;

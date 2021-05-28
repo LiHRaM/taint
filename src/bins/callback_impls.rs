@@ -19,9 +19,9 @@ pub fn mir_analysis(tcx: rustc_middle::ty::TyCtxt) {
     };
 
     let main_id = entry_def_id.to_def_id();
-    let config = eval::TaintConfig::default();
+    let config = eval::main::TaintConfig::default();
 
-    if let Some(return_code) = eval::eval_main(tcx, main_id, config) {
+    if let Some(return_code) = eval::main::eval_main(tcx, main_id, config) {
         std::process::exit(i32::try_from(return_code).expect("Return value was too large!"));
     }
 }
