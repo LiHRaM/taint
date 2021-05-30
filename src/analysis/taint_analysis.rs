@@ -23,7 +23,7 @@ use super::taint_domain::{PointsAwareTaintDomain, TaintDomain};
 
 pub(crate) type PointsMap = HashMap<Local, HashSet<Local>>;
 
-type InitSet = Vec<bool>;
+type InitSet = Vec<Option<bool>>;
 
 /// A dataflow analysis that tracks whether a value may carry a taint.
 ///
@@ -75,7 +75,12 @@ impl<'inter> AnalysisDomain<'inter> for TaintAnalysis<'_, '_> {
         // For the main function, locals all start out untainted.
         // For other functions, however, we must check if they receive tainted parameters.
         if !self.init.is_empty() {
-            for (_, arg) in self.init.iter().zip(body.args_iter()).filter(|(&t, _)| t) {
+            for (_, arg) in self
+                .init
+                .iter()
+                .zip(body.args_iter())
+                .filter(|(&t, _)| t.unwrap_or(false))
+            {
                 state.set_taint(arg, true);
             }
         }
@@ -240,46 +245,52 @@ where
             Some(AttrInfoKind::Source) => self.t_visit_source_destination(destination),
             Some(AttrInfoKind::Sanitizer) => self.t_visit_sanitizer_destination(destination),
             Some(AttrInfoKind::Sink) => self.t_visit_sink(name, args, span),
-            None => {
-                let init = args
-                    .iter()
-                    .map(|arg| arg.place().unwrap().local)
-                    .map(|local| self.state.get_taint(local))
-                    .collect::<Vec<_>>();
+            None => self.t_visit_analysis(args, id, destination),
+        }
+    }
 
-                let target_body = self.tcx.optimized_mir(*id);
+    fn t_visit_analysis(
+        &mut self,
+        args: &[Operand],
+        id: &rustc_hir::def_id::DefId,
+        destination: &Option<(Place, BasicBlock)>,
+    ) {
+        let init = args
+            .iter()
+            .map(|arg| match arg {
+                Operand::Copy(p) | Operand::Move(p) => Some(self.state.get_taint(p.local)),
+                Operand::Constant(_) => None,
+            })
+            .collect::<Vec<_>>();
+        let target_body = self.tcx.optimized_mir(*id);
+        let mut results = TaintAnalysis::new_with_init(self.tcx, self.info, init)
+            .into_engine(self.tcx, target_body)
+            .pass_name("taint_analysis")
+            .iterate_to_fixpoint()
+            .into_results_cursor(target_body);
+        if let Some(last) = target_body.basic_blocks().last() {
+            results.seek_to_block_end(last);
+            let end_state = results.get();
 
-                let mut results = TaintAnalysis::new_with_init(self.tcx, self.info, init)
-                    .into_engine(self.tcx, target_body)
-                    .pass_name("taint_analysis")
-                    .iterate_to_fixpoint()
-                    .into_results_cursor(target_body);
+            // Check if return place is tainted, in which case this is a typical sink.
+            if end_state.get_taint(Local::from_usize(0)) {
+                self.t_visit_source_destination(destination);
+            }
 
-                if let Some(last) = target_body.basic_blocks().last() {
-                    results.seek_to_block_end(last);
-                    let end_state = results.get();
+            let arg_map = args
+                .iter()
+                .map(|arg| {
+                    arg.place()
+                        .expect("constant submitted to function call")
+                        .local
+                })
+                .zip(target_body.args_iter())
+                .collect::<Vec<_>>();
 
-                    // Check if return place is tainted, in which case this is a typical sink.
-                    if end_state.get_taint(Local::from_usize(0)) {
-                        self.t_visit_source_destination(destination);
-                    }
-
-                    let arg_map = args
-                        .iter()
-                        .map(|arg| {
-                            arg.place()
-                                .expect("constant submitted to function call")
-                                .local
-                        })
-                        .zip(target_body.args_iter())
-                        .collect::<Vec<_>>();
-
-                    // Check if any variables which were passed in are tainted at this point.
-                    for (caller_arg, callee_arg) in arg_map {
-                        self.state
-                            .set_taint(caller_arg, end_state.get_taint(callee_arg));
-                    }
-                }
+            // Check if any variables which were passed in are tainted at this point.
+            for (caller_arg, callee_arg) in arg_map {
+                self.state
+                    .set_taint(caller_arg, end_state.get_taint(callee_arg));
             }
         }
     }
