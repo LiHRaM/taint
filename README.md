@@ -6,7 +6,7 @@ We use Rust compiler internals to inspect [MIR](https://rustc-dev-guide.rust-lan
 ## Examples
 
 For examples of how this tool can be used, and what the expected results would be, please have a look at the `tests/` folder.
-We have examples of program which should emit no errors, and programs where the taint analysis should detect a sink receiving possibly tainted data.
+We have examples of programs which should emit no errors, and programs where the taint analysis should detect a sink receiving possibly tainted data.
 
 ## Setting Up
 
