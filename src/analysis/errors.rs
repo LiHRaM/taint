@@ -9,3 +9,12 @@ pub struct TaintedSink {
     #[label = "sink function"]
     pub span: Span,
 }
+
+#[derive(SessionDiagnostic)]
+#[error = "T0002"]
+pub struct InvalidVariant {
+    pub attr_name: String,
+    #[message = "Taint attribute `{attr_name}` is invalid. We currently only support `source`, `sink`, and `sanitizer`"]
+    #[label = "invalid taint attribute"]
+    pub span: Span,
+}

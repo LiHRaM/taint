@@ -1,4 +1,4 @@
 pub mod taint_analysis;
 
-mod errors;
+pub(crate) mod errors;
 mod taint_domain;

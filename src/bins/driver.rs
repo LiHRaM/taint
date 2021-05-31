@@ -6,13 +6,13 @@ extern crate rustc_hir;
 extern crate rustc_interface;
 extern crate rustc_middle;
 extern crate rustc_session;
+extern crate rustc_span;
+extern crate rustc_ast;
 
 use rustc_driver::Compilation;
-use rustc_errors::{emitter::HumanReadableErrorType, ColorConfig};
-use rustc_hir::def_id::LOCAL_CRATE;
-use rustc_session::config::ErrorOutputType;
-use std::convert::TryFrom;
 use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
+
+mod callback_impls;
 
 fn main() {
     rustc_driver::install_ice_hook();
@@ -80,39 +80,26 @@ fn compile_time_sysroot() -> Option<String> {
 struct TaintCompilerCallbacks;
 
 impl rustc_driver::Callbacks for TaintCompilerCallbacks {
+    fn config(&mut self, _config: &mut rustc_interface::Config) {}
+
+    /// We use procedural macro attributes to tag sources, sinks and sanitizers.
+    /// Since they are removed during expansion, we can still find them after parsing.
+    /// We use this stage to find them and create lists which we can use while analyzing the MIR.
     fn after_analysis<'tcx>(
         &mut self,
         compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> Compilation {
         compiler.session().abort_if_errors();
-
-        queries.global_ctxt().unwrap().peek_mut().enter(|tcx| {
-            let (entry_def_id, _) = if let Some((entry_def, x)) = tcx.entry_fn(LOCAL_CRATE) {
-                (entry_def, x)
-            } else {
-                let output_ty = ErrorOutputType::HumanReadable(HumanReadableErrorType::Default(
-                    ColorConfig::Auto,
-                ));
-                rustc_session::early_error(
-                    output_ty,
-                    "taint can only analyze programs that have a main function",
-                );
-            };
-
-            if let Some(return_code) = taint::eval::eval_main(
-                tcx,
-                entry_def_id.to_def_id(),
-                taint::eval::TaintConfig::default(),
-            ) {
-                std::process::exit(
-                    i32::try_from(return_code).expect("Return value was too large!"),
-                );
-            }
-        });
-
+        enter_with_fn(queries, callback_impls::mir_analysis);
         compiler.session().abort_if_errors();
-
         Compilation::Stop
     }
+}
+
+fn enter_with_fn<'tcx, F: Fn(rustc_middle::ty::TyCtxt)>(
+    queries: &'tcx rustc_interface::Queries<'tcx>,
+    enter_fn: F,
+) {
+    queries.global_ctxt().unwrap().peek_mut().enter(enter_fn);
 }

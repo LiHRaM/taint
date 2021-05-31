@@ -22,7 +22,7 @@ tracing-subscriber = { version = "0.2.18", features = ["env-filter"] }
 rustc-workspace-hack = "1.0.0"
 
 [dev-dependencies]
-compiletest_rs = { version = "0.6", features = ["tmp"] }
+compiletest_rs = { version = "0.7", features = ["tmp"] }
 rustc_version = "0.3"
 colored = "2"
 

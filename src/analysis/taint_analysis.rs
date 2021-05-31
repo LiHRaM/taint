@@ -1,16 +1,18 @@
-use crate::{Summary, TaintProperty};
-
 use rustc_index::bit_set::BitSet;
-use rustc_middle::mir::{
-    visit::Visitor, BasicBlock, Body, HasLocalDecls, Local, Location, Operand, Place, Rvalue,
-    Statement, StatementKind, Terminator, TerminatorKind,
+use rustc_middle::{
+    mir::{
+        visit::Visitor, BasicBlock, Body, Constant, HasLocalDecls, Local, Location, Operand, Place,
+        Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
+    },
+    ty::{TyCtxt, TyKind},
 };
 
 use rustc_mir::dataflow::{Analysis, AnalysisDomain, Forward};
-use rustc_session::Session;
 use rustc_span::Span;
 
 use tracing::instrument;
+
+use crate::eval::{AttrInfo, AttrInfoKind};
 
 use super::taint_domain::TaintDomain;
 
@@ -18,105 +20,104 @@ use super::taint_domain::TaintDomain;
 ///
 /// Taints are introduced through sources, and consumed by sinks.
 /// Ideally, a sink never consumes a tainted value - this should result in an error.
-pub struct TaintAnalysis<'sess> {
-    session: &'sess Session,
-    summaries: Vec<Summary<'sess>>,
+pub struct TaintAnalysis<'tcx, 'inter> {
+    tcx: TyCtxt<'tcx>,
+    info: &'inter AttrInfo,
 }
 
-impl<'sess> TaintAnalysis<'sess> {
-    pub fn new(session: &'sess Session, summaries: Vec<Summary<'sess>>) -> Self {
-        TaintAnalysis { session, summaries }
+impl<'tcx, 'inter> TaintAnalysis<'tcx, 'inter> {
+    pub fn new(tcx: TyCtxt<'tcx>, info: &'inter AttrInfo) -> Self {
+        TaintAnalysis { tcx, info }
     }
 }
 
-impl<'tcx> AnalysisDomain<'tcx> for TaintAnalysis<'tcx> {
+struct TransferFunction<'tcx, 'inter, 'intra, T> {
+    tcx: TyCtxt<'tcx>,
+    info: &'inter AttrInfo,
+    state: &'intra mut T,
+}
+
+impl<'inter> AnalysisDomain<'inter> for TaintAnalysis<'_, '_> {
     type Domain = BitSet<Local>;
     const NAME: &'static str = "TaintAnalysis";
 
     type Direction = Forward;
 
-    fn bottom_value(&self, body: &Body<'tcx>) -> Self::Domain {
+    fn bottom_value(&self, body: &Body<'inter>) -> Self::Domain {
         // bottom = untainted
         BitSet::new_empty(body.local_decls().len())
     }
 
-    fn initialize_start_block(&self, _body: &Body<'tcx>, _state: &mut Self::Domain) {
+    fn initialize_start_block(&self, _body: &Body<'inter>, _state: &mut Self::Domain) {
         // Locals start out being untainted
     }
 }
 
-impl<'tcx> Analysis<'tcx> for TaintAnalysis<'tcx> {
+impl<'tcx, 'inter, 'intra> Analysis<'intra> for TaintAnalysis<'tcx, 'inter> {
     fn apply_statement_effect(
         &self,
         state: &mut Self::Domain,
-        statement: &Statement<'tcx>,
+        statement: &Statement<'intra>,
         location: Location,
     ) {
-        self.transfer_function(state)
-            .visit_statement(statement, location);
+        TransferFunction {
+            state,
+            tcx: self.tcx,
+            info: self.info,
+        }
+        .visit_statement(statement, location);
     }
 
     fn apply_terminator_effect(
         &self,
         state: &mut Self::Domain,
-        terminator: &Terminator<'tcx>,
+        terminator: &Terminator<'intra>,
         location: Location,
     ) {
-        self.transfer_function(state)
-            .visit_terminator(terminator, location);
+        TransferFunction {
+            state,
+            tcx: self.tcx,
+            info: self.info,
+        }
+        .visit_terminator(terminator, location);
     }
 
     fn apply_call_return_effect(
         &self,
         _state: &mut Self::Domain,
         _block: BasicBlock,
-        _func: &Operand<'tcx>,
-        _args: &[Operand<'tcx>],
-        _return_place: Place<'tcx>,
+        _func: &Operand<'intra>,
+        _args: &[Operand<'intra>],
+        _return_place: Place<'intra>,
     ) {
         // do nothing
     }
 }
 
-impl<'tcx> TaintAnalysis<'tcx> {
-    fn transfer_function<T>(&'tcx self, state: &'tcx mut T) -> TransferFunction<'tcx, T> {
-        TransferFunction {
-            state,
-            session: self.session,
-            summaries: self.summaries.clone(),
-        }
-    }
-}
-
-struct TransferFunction<'tcx, T> {
-    state: &'tcx mut T,
-    session: &'tcx Session,
-    summaries: Vec<Summary<'tcx>>,
-}
-
-impl<'tcx, T: std::fmt::Debug> std::fmt::Debug for TransferFunction<'tcx, T> {
+impl<'tcx, T> std::fmt::Debug for TransferFunction<'_, '_, '_, T>
+where
+    T: std::fmt::Debug,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!("{:?}", &self.state))
     }
 }
 
-impl<'tcx, T: TaintDomain<Local> + std::fmt::Debug> Visitor<'tcx> for TransferFunction<'_, T> {
-    fn visit_statement(&mut self, statement: &Statement<'tcx>, _: Location) {
+impl<'inter, T> Visitor<'inter> for TransferFunction<'_, '_, '_, T>
+where
+    T: TaintDomain<Local> + std::fmt::Debug,
+{
+    fn visit_statement(&mut self, statement: &Statement<'inter>, _: Location) {
         let Statement { source_info, kind } = statement;
 
         self.visit_source_info(source_info);
 
-        // TODO(Hilmar): Match more statement kinds
-        #[allow(clippy::single_match)]
-        match kind {
-            StatementKind::Assign(box (ref place, ref rvalue)) => {
-                self.t_visit_assign(place, rvalue);
-            }
-            _ => (),
+        if let StatementKind::Assign(box (ref place, ref rvalue)) = kind {
+            self.t_visit_assign(place, rvalue);
         }
     }
 
-    fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, _: Location) {
+    fn visit_terminator(&mut self, terminator: &Terminator<'inter>, _: Location) {
         let Terminator { source_info, kind } = terminator;
 
         self.visit_source_info(source_info);
@@ -126,21 +127,23 @@ impl<'tcx, T: TaintDomain<Local> + std::fmt::Debug> Visitor<'tcx> for TransferFu
             TerminatorKind::SwitchInt { .. } => {}
             TerminatorKind::Return => {}
             TerminatorKind::Call {
-                func,
+                func: Operand::Constant(ref c),
                 args,
                 destination,
                 fn_span,
                 ..
-            } => self.t_visit_call(func, args, destination, fn_span),
+            } => {
+                self.t_visit_call(c, args, destination, fn_span);
+            }
             TerminatorKind::Assert { .. } => {}
             _ => {}
         }
     }
 }
 
-impl<'tcx, T> TransferFunction<'tcx, T>
+impl<'long, T> TransferFunction<'_, '_, '_, T>
 where
-    Self: Visitor<'tcx>,
+    Self: Visitor<'long>,
     T: TaintDomain<Local> + std::fmt::Debug,
 {
     #[instrument]
@@ -191,38 +194,24 @@ where
     #[instrument]
     fn t_visit_call(
         &mut self,
-        func: &Operand,
+        func: &Constant,
         args: &[Operand],
         destination: &Option<(Place, BasicBlock)>,
         span: &Span,
     ) {
-        let name = func
-            .constant()
-            .expect("Operand is not a function")
-            .to_string();
+        let name = func.to_string();
+        let id = match func.literal.ty().kind() {
+            TyKind::FnDef(id, _args) => Some(id),
+            _ => None,
+        }
+        .unwrap();
 
-        if let Some((is_source, is_sink)) =
-            if let Some(summary) = self.summaries.iter().find(|x| name == x.name) {
-                let Summary {
-                    is_source: taints,
-                    is_sink: sink,
-                    ..
-                } = summary;
-                Some((taints.to_owned(), sink.to_owned()))
-            } else {
-                None
-            }
-        {
-            match is_source {
-                TaintProperty::Never => {}
-                TaintProperty::Always => self.t_visit_source_destination(destination),
-                TaintProperty::Sometimes(_) => {}
-            }
-
-            match is_sink {
-                TaintProperty::Never => {}
-                TaintProperty::Always => self.t_visit_sink(name, args, span),
-                TaintProperty::Sometimes(_) => {}
+        match self.info.get_kind(id) {
+            Some(AttrInfoKind::Source) => self.t_visit_source_destination(destination),
+            Some(AttrInfoKind::Sanitizer) => self.t_visit_sanitizer_destination(destination),
+            Some(AttrInfoKind::Sink) => self.t_visit_sink(name, args, span),
+            None => {
+                // TODO(Hilmar): Perform analysis
             }
         }
     }
@@ -230,6 +219,12 @@ where
     fn t_visit_source_destination(&mut self, destination: &Option<(Place, BasicBlock)>) {
         if let Some((place, _)) = destination {
             self.state.mark_tainted(place.local);
+        }
+    }
+
+    fn t_visit_sanitizer_destination(&mut self, destination: &Option<(Place, BasicBlock)>) {
+        if let Some((place, _)) = destination {
+            self.state.mark_untainted(place.local);
         }
     }
 
@@ -241,7 +236,7 @@ where
                 false
             }
         }) {
-            self.session.emit_err(super::errors::TaintedSink {
+            self.tcx.sess.emit_err(super::errors::TaintedSink {
                 fn_name: name,
                 span: *span,
             });
