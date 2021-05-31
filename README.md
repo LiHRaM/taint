@@ -1,19 +1,32 @@
 # Taint Analysis
 
-This project uses the Rust compiler to implement a taint analysis, hooking into the compiler to process an intermediate representation of the code.
+This project is a static [taint analysis](https://en.wikipedia.org/wiki/Taint_checking) tool for the Rust programming language.
+We use Rust compiler internals to inspect [MIR](https://rustc-dev-guide.rust-lang.org/mir/), which is an intermediate representation of Rust, useful for [dataflow analysis](https://en.wikipedia.org/wiki/Data-flow_analysis).
 
-## Setting up:
+## Examples
 
-We use compiler internals through `#![feature(rustc_private)]`.
-To use those compiler internals, we must use the nightly toolchain, with some additional components.
-These are all defined in the "rust-toolchain" file, and automatically recognised by cargo.
+For examples of how this tool can be used, and what the expected results would be, please have a look at the `tests/` folder.
+We have examples of programs which should emit no errors, and programs where the taint analysis should detect a sink receiving possibly tainted data.
 
-To test that the binary correctly hooks into and runs the compiler, run the following command:
+## Setting Up
+
+We use the `rust-toolchain` file to manage which version of the compiler we use, as well as any additional components.
+Since this project uses compiler internals and the `#![feature(rustc_private)]` feature, we must use nightly.
+Cargo should automatically recognize the toolchain file, and download the necessary toolchain and components when you build the project.
+
+## Tests
+
+We have tried to make sure that running tests does not deviate from the typical Rust project experience, and should be as simple as typing in the following command:
+
 ```
 cargo test
 ```
 
-### Running the compiler
+## Licensing
+
+We use the MIT license, available in the `LICENSE` file.
+
+## Compiler Internals
 
 `rustc_driver` allows us to run the compiler, and `rustc_interface` provides APIs for hooking into the right places to perform the analysis.
 
