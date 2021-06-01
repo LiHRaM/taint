@@ -1,8 +1,10 @@
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
+    rc::Rc,
 };
 
+use rustc_hir::def_id::DefId;
 use rustc_index::bit_set::BitSet;
 use rustc_middle::{
     mir::{
@@ -22,6 +24,7 @@ use crate::eval::attributes::{AttrInfo, AttrInfoKind};
 use super::taint_domain::{PointsAwareTaintDomain, TaintDomain};
 
 pub(crate) type PointsMap = HashMap<Local, HashSet<Local>>;
+pub(crate) type Contexts = HashMap<(DefId, InitSet), Option<BitSet<Local>>>;
 
 type InitSet = Vec<Option<bool>>;
 
@@ -30,8 +33,11 @@ type InitSet = Vec<Option<bool>>;
 /// Taints are introduced through sources, and consumed by sinks.
 /// Ideally, a sink never consumes a tainted value - this should result in an error.
 pub struct TaintAnalysis<'tcx, 'inter> {
+    /// We use the type context to emit errors and get the MIR for other functions.
     tcx: TyCtxt<'tcx>,
+    /// All the functions that have been marked
     info: &'inter AttrInfo,
+    contexts: Rc<RefCell<Contexts>>,
     init: InitSet,
     points: RefCell<PointsMap>,
 }
@@ -39,15 +45,26 @@ pub struct TaintAnalysis<'tcx, 'inter> {
 impl<'tcx, 'inter> TaintAnalysis<'tcx, 'inter> {
     /// Call on `main` function
     pub fn new(tcx: TyCtxt<'tcx>, info: &'inter AttrInfo) -> Self {
-        Self::new_with_init(tcx, info, InitSet::new())
+        Self::new_with_init(
+            tcx,
+            info,
+            Rc::new(RefCell::new(Contexts::new())),
+            InitSet::new(),
+        )
     }
 
     /// Call on dependencies
     #[inline]
-    fn new_with_init(tcx: TyCtxt<'tcx>, info: &'inter AttrInfo, init: InitSet) -> Self {
+    fn new_with_init(
+        tcx: TyCtxt<'tcx>,
+        info: &'inter AttrInfo,
+        contexts: Rc<RefCell<Contexts>>,
+        init: InitSet,
+    ) -> Self {
         TaintAnalysis {
             tcx,
             info,
+            contexts,
             init,
             points: RefCell::new(PointsMap::new()),
         }
@@ -57,6 +74,7 @@ impl<'tcx, 'inter> TaintAnalysis<'tcx, 'inter> {
 struct TransferFunction<'tcx, 'inter, 'intra> {
     tcx: TyCtxt<'tcx>,
     info: &'inter AttrInfo,
+    contexts: Rc<RefCell<Contexts>>,
     state: &'intra mut PointsAwareTaintDomain<'intra, Local>,
 }
 
@@ -97,6 +115,7 @@ impl<'tcx, 'inter, 'intra> Analysis<'intra> for TaintAnalysis<'tcx, 'inter> {
         TransferFunction {
             tcx: self.tcx,
             info: self.info,
+            contexts: self.contexts.clone(),
             state: &mut PointsAwareTaintDomain {
                 state,
                 map: &mut self.points.borrow_mut(),
@@ -114,6 +133,7 @@ impl<'tcx, 'inter, 'intra> Analysis<'intra> for TaintAnalysis<'tcx, 'inter> {
         TransferFunction {
             tcx: self.tcx,
             info: self.info,
+            contexts: self.contexts.clone(),
             state: &mut PointsAwareTaintDomain {
                 state,
                 map: &mut self.points.borrow_mut(),
@@ -245,11 +265,11 @@ where
             Some(AttrInfoKind::Source) => self.t_visit_source_destination(destination),
             Some(AttrInfoKind::Sanitizer) => self.t_visit_sanitizer_destination(destination),
             Some(AttrInfoKind::Sink) => self.t_visit_sink(name, args, span),
-            None => self.t_visit_analysis(args, id, destination),
+            None => self.t_fn_call_analysis(args, id, destination),
         }
     }
 
-    fn t_visit_analysis(
+    fn t_fn_call_analysis(
         &mut self,
         args: &[Operand],
         id: &rustc_hir::def_id::DefId,
@@ -262,37 +282,79 @@ where
                 Operand::Constant(_) => None,
             })
             .collect::<Vec<_>>();
-        let target_body = self.tcx.optimized_mir(*id);
-        let mut results = TaintAnalysis::new_with_init(self.tcx, self.info, init)
-            .into_engine(self.tcx, target_body)
-            .pass_name("taint_analysis")
-            .iterate_to_fixpoint()
-            .into_results_cursor(target_body);
-        if let Some(last) = target_body.basic_blocks().last() {
-            results.seek_to_block_end(last);
-            let end_state = results.get();
 
-            // Check if return place is tainted, in which case this is a typical sink.
-            if end_state.get_taint(Local::from_usize(0)) {
+        let end_state = self.t_function_summary(id, init);
+
+        if let Some(end_state) = end_state {
+            let return_place = Local::from_usize(0);
+
+            if end_state.get_taint(return_place) {
                 self.t_visit_source_destination(destination);
             }
 
+            let target_body = self.tcx.optimized_mir(*id);
             let arg_map = args
                 .iter()
-                .map(|arg| {
-                    arg.place()
-                        .expect("constant submitted to function call")
-                        .local
-                })
+                .map(|arg| arg.place().or(None))
                 .zip(target_body.args_iter())
                 .collect::<Vec<_>>();
 
             // Check if any variables which were passed in are tainted at this point.
             for (caller_arg, callee_arg) in arg_map {
-                self.state
-                    .set_taint(caller_arg, end_state.get_taint(callee_arg));
+                if let Some(place) = caller_arg {
+                    self.state
+                        .set_taint(place.local, end_state.get_taint(callee_arg));
+                }
             }
         }
+    }
+
+    fn t_function_summary(&mut self, id: &DefId, init: Vec<Option<bool>>) -> Option<BitSet<Local>> {
+        let key = (*id, init.clone());
+
+        if let Some(summary) = self.t_get_cached_summary(&key) {
+            summary
+        } else {
+            // In the case that we have recursive or mutually recursive function calls,
+            // we make sure that we only compute a summary once per key by inserting None while we compute it.
+            // For subsequent calls, calling `t_function_summary` will simply return None and the visitor will analyze other branches.
+            self.t_insert_summary(&key, None);
+
+            let target_body = self.tcx.optimized_mir(*id);
+            let mut results =
+                TaintAnalysis::new_with_init(self.tcx, self.info, self.contexts.clone(), init)
+                    .into_engine(self.tcx, target_body)
+                    .pass_name("taint_analysis")
+                    .iterate_to_fixpoint()
+                    .into_results_cursor(target_body);
+
+            let state = if let Some(last) = target_body.basic_blocks().last() {
+                results.seek_to_block_end(last);
+                Some(results.get().clone())
+            } else {
+                None
+            };
+
+            // Once the function summary has been computed, we insert it into the cache.
+            self.t_insert_summary(&key, state.clone());
+
+            state
+        }
+    }
+
+    fn t_insert_summary(&mut self, key: &(DefId, Vec<Option<bool>>), val: Option<BitSet<Local>>) {
+        self.contexts.borrow_mut().insert(key.clone(), val);
+    }
+
+    fn t_get_cached_summary(
+        &mut self,
+        key: &(DefId, Vec<Option<bool>>),
+    ) -> Option<Option<BitSet<Local>>> {
+        let contexts = self.contexts.borrow();
+        if let Some(state) = contexts.get(key) {
+            return Some(state.clone());
+        }
+        None
     }
 
     fn t_visit_source_destination(&mut self, destination: &Option<(Place, BasicBlock)>) {
