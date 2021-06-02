@@ -1,3 +1,5 @@
+// Test that const values are not considered taints.
+
 #![feature(register_tool)]
 #![register_tool(taint)]
 

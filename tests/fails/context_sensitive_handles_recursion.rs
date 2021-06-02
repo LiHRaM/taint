@@ -1,9 +1,11 @@
+// Test whether our context-sensitivity implementation properly handles recursion.
+
 #![feature(register_tool)]
 #![register_tool(taint)]
 
 fn main() {
     let val = recursive_decrement(10);
-    process(val); //~ERROR function `process` received tainted input
+    process(val); //~ ERROR function `process` received tainted input [T0001]
 }
 
 #[taint::source]

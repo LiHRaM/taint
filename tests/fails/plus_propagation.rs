@@ -1,3 +1,5 @@
+// Test that the taint is propagated when we add two values.
+
 #![feature(register_tool)]
 #![register_tool(taint)]
 
