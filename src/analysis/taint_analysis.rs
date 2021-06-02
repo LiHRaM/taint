@@ -1,3 +1,10 @@
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
+
+use rustc_hir::def_id::DefId;
 use rustc_index::bit_set::BitSet;
 use rustc_middle::{
     mir::{
@@ -12,29 +19,63 @@ use rustc_span::Span;
 
 use tracing::instrument;
 
-use crate::eval::{AttrInfo, AttrInfoKind};
+use crate::eval::attributes::{AttrInfo, AttrInfoKind};
 
-use super::taint_domain::TaintDomain;
+use super::taint_domain::{PointsAwareTaintDomain, TaintDomain};
+
+pub(crate) type PointsMap = HashMap<Local, HashSet<Local>>;
+pub(crate) type Contexts = HashMap<(DefId, InitSet), Option<BitSet<Local>>>;
+
+type InitSet = Vec<Option<bool>>;
 
 /// A dataflow analysis that tracks whether a value may carry a taint.
 ///
 /// Taints are introduced through sources, and consumed by sinks.
 /// Ideally, a sink never consumes a tainted value - this should result in an error.
 pub struct TaintAnalysis<'tcx, 'inter> {
+    /// We use the type context to emit errors and get the MIR for other functions.
     tcx: TyCtxt<'tcx>,
+    /// All the functions that have been marked
     info: &'inter AttrInfo,
+    contexts: Rc<RefCell<Contexts>>,
+    init: InitSet,
+    points: RefCell<PointsMap>,
 }
 
 impl<'tcx, 'inter> TaintAnalysis<'tcx, 'inter> {
+    /// Call on `main` function
     pub fn new(tcx: TyCtxt<'tcx>, info: &'inter AttrInfo) -> Self {
-        TaintAnalysis { tcx, info }
+        Self::new_with_init(
+            tcx,
+            info,
+            Rc::new(RefCell::new(Contexts::new())),
+            InitSet::new(),
+        )
+    }
+
+    /// Call on dependencies
+    #[inline]
+    fn new_with_init(
+        tcx: TyCtxt<'tcx>,
+        info: &'inter AttrInfo,
+        contexts: Rc<RefCell<Contexts>>,
+        init: InitSet,
+    ) -> Self {
+        TaintAnalysis {
+            tcx,
+            info,
+            contexts,
+            init,
+            points: RefCell::new(PointsMap::new()),
+        }
     }
 }
 
-struct TransferFunction<'tcx, 'inter, 'intra, T> {
+struct TransferFunction<'tcx, 'inter, 'intra> {
     tcx: TyCtxt<'tcx>,
     info: &'inter AttrInfo,
-    state: &'intra mut T,
+    contexts: Rc<RefCell<Contexts>>,
+    state: &'intra mut PointsAwareTaintDomain<'intra, Local>,
 }
 
 impl<'inter> AnalysisDomain<'inter> for TaintAnalysis<'_, '_> {
@@ -44,12 +85,23 @@ impl<'inter> AnalysisDomain<'inter> for TaintAnalysis<'_, '_> {
     type Direction = Forward;
 
     fn bottom_value(&self, body: &Body<'inter>) -> Self::Domain {
-        // bottom = untainted
+        // bottom = definitely untainted
         BitSet::new_empty(body.local_decls().len())
     }
 
-    fn initialize_start_block(&self, _body: &Body<'inter>, _state: &mut Self::Domain) {
-        // Locals start out being untainted
+    fn initialize_start_block(&self, body: &Body<'inter>, state: &mut Self::Domain) {
+        // For the main function, locals all start out untainted.
+        // For other functions, however, we must check if they receive tainted parameters.
+        if !self.init.is_empty() {
+            for (_, arg) in self
+                .init
+                .iter()
+                .zip(body.args_iter())
+                .filter(|(&t, _)| t.unwrap_or(false))
+            {
+                state.set_taint(arg, true);
+            }
+        }
     }
 }
 
@@ -61,9 +113,13 @@ impl<'tcx, 'inter, 'intra> Analysis<'intra> for TaintAnalysis<'tcx, 'inter> {
         location: Location,
     ) {
         TransferFunction {
-            state,
             tcx: self.tcx,
             info: self.info,
+            contexts: self.contexts.clone(),
+            state: &mut PointsAwareTaintDomain {
+                state,
+                map: &mut self.points.borrow_mut(),
+            },
         }
         .visit_statement(statement, location);
     }
@@ -75,9 +131,13 @@ impl<'tcx, 'inter, 'intra> Analysis<'intra> for TaintAnalysis<'tcx, 'inter> {
         location: Location,
     ) {
         TransferFunction {
-            state,
             tcx: self.tcx,
             info: self.info,
+            contexts: self.contexts.clone(),
+            state: &mut PointsAwareTaintDomain {
+                state,
+                map: &mut self.points.borrow_mut(),
+            },
         }
         .visit_terminator(terminator, location);
     }
@@ -94,19 +154,13 @@ impl<'tcx, 'inter, 'intra> Analysis<'intra> for TaintAnalysis<'tcx, 'inter> {
     }
 }
 
-impl<'tcx, T> std::fmt::Debug for TransferFunction<'_, '_, '_, T>
-where
-    T: std::fmt::Debug,
-{
+impl<'tcx> std::fmt::Debug for TransferFunction<'_, '_, '_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!("{:?}", &self.state))
     }
 }
 
-impl<'inter, T> Visitor<'inter> for TransferFunction<'_, '_, '_, T>
-where
-    T: TaintDomain<Local> + std::fmt::Debug,
-{
+impl<'inter> Visitor<'inter> for TransferFunction<'_, '_, '_> {
     fn visit_statement(&mut self, statement: &Statement<'inter>, _: Location) {
         let Statement { source_info, kind } = statement;
 
@@ -141,17 +195,16 @@ where
     }
 }
 
-impl<'long, T> TransferFunction<'_, '_, '_, T>
+impl<'long> TransferFunction<'_, '_, '_>
 where
     Self: Visitor<'long>,
-    T: TaintDomain<Local> + std::fmt::Debug,
 {
     #[instrument]
     fn t_visit_assign(&mut self, place: &Place, rvalue: &Rvalue) {
         match rvalue {
             // If we assign a constant to a place, the place is clean.
             Rvalue::Use(Operand::Constant(_)) | Rvalue::UnaryOp(_, Operand::Constant(_)) => {
-                self.state.mark_untainted(place.local)
+                self.state.set_taint(place.local, false)
             }
 
             // Otherwise we propagate the taint
@@ -161,13 +214,13 @@ where
 
             Rvalue::BinaryOp(_, box b) | Rvalue::CheckedBinaryOp(_, box b) => match b {
                 (Operand::Constant(_), Operand::Constant(_)) => {
-                    self.state.mark_untainted(place.local);
+                    self.state.set_taint(place.local, false);
                 }
                 (Operand::Copy(a) | Operand::Move(a), Operand::Copy(b) | Operand::Move(b)) => {
-                    if self.state.is_tainted(a.local) || self.state.is_tainted(b.local) {
-                        self.state.mark_tainted(place.local);
+                    if self.state.get_taint(a.local) || self.state.get_taint(b.local) {
+                        self.state.set_taint(place.local, true);
                     } else {
-                        self.state.mark_untainted(place.local);
+                        self.state.set_taint(place.local, false);
                     }
                 }
                 (Operand::Copy(p) | Operand::Move(p), Operand::Constant(_))
@@ -178,9 +231,11 @@ where
             Rvalue::UnaryOp(_, Operand::Move(p) | Operand::Copy(p)) => {
                 self.state.propagate(p.local, place.local);
             }
+            Rvalue::Ref(_region_kind, _borrow_kind, p) => {
+                self.state.add_ref(place, p);
+            }
 
             Rvalue::Repeat(_, _) => {}
-            Rvalue::Ref(_, _, _) => {}
             Rvalue::ThreadLocalRef(_) => {}
             Rvalue::AddressOf(_, _) => {}
             Rvalue::Len(_) => {}
@@ -210,28 +265,114 @@ where
             Some(AttrInfoKind::Source) => self.t_visit_source_destination(destination),
             Some(AttrInfoKind::Sanitizer) => self.t_visit_sanitizer_destination(destination),
             Some(AttrInfoKind::Sink) => self.t_visit_sink(name, args, span),
-            None => {
-                // TODO(Hilmar): Perform analysis
+            None => self.t_fn_call_analysis(args, id, destination),
+        }
+    }
+
+    fn t_fn_call_analysis(
+        &mut self,
+        args: &[Operand],
+        id: &rustc_hir::def_id::DefId,
+        destination: &Option<(Place, BasicBlock)>,
+    ) {
+        let init = args
+            .iter()
+            .map(|arg| match arg {
+                Operand::Copy(p) | Operand::Move(p) => Some(self.state.get_taint(p.local)),
+                Operand::Constant(_) => None,
+            })
+            .collect::<Vec<_>>();
+
+        let end_state = self.t_function_summary(id, init);
+
+        if let Some(end_state) = end_state {
+            let return_place = Local::from_usize(0);
+
+            if end_state.get_taint(return_place) {
+                self.t_visit_source_destination(destination);
+            }
+
+            let target_body = self.tcx.optimized_mir(*id);
+            let arg_map = args
+                .iter()
+                .map(|arg| arg.place().or(None))
+                .zip(target_body.args_iter())
+                .collect::<Vec<_>>();
+
+            // Check if any variables which were passed in are tainted at this point.
+            for (caller_arg, callee_arg) in arg_map {
+                if let Some(place) = caller_arg {
+                    self.state
+                        .set_taint(place.local, end_state.get_taint(callee_arg));
+                }
             }
         }
     }
 
+    fn t_function_summary(&mut self, id: &DefId, init: Vec<Option<bool>>) -> Option<BitSet<Local>> {
+        let key = (*id, init.clone());
+
+        if let Some(summary) = self.t_get_cached_summary(&key) {
+            summary
+        } else {
+            // In the case that we have recursive or mutually recursive function calls,
+            // we make sure that we only compute a summary once per key by inserting None while we compute it.
+            // For subsequent calls, calling `t_function_summary` will simply return None and the visitor will analyze other branches.
+            self.t_insert_summary(&key, None);
+
+            let target_body = self.tcx.optimized_mir(*id);
+            let mut results =
+                TaintAnalysis::new_with_init(self.tcx, self.info, self.contexts.clone(), init)
+                    .into_engine(self.tcx, target_body)
+                    .pass_name("taint_analysis")
+                    .iterate_to_fixpoint()
+                    .into_results_cursor(target_body);
+
+            let state = if let Some(last) = target_body.basic_blocks().last() {
+                results.seek_to_block_end(last);
+                Some(results.get().clone())
+            } else {
+                None
+            };
+
+            // Once the function summary has been computed, we insert it into the cache.
+            self.t_insert_summary(&key, state.clone());
+
+            state
+        }
+    }
+
+    fn t_insert_summary(&mut self, key: &(DefId, Vec<Option<bool>>), val: Option<BitSet<Local>>) {
+        self.contexts.borrow_mut().insert(key.clone(), val);
+    }
+
+    fn t_get_cached_summary(
+        &mut self,
+        key: &(DefId, Vec<Option<bool>>),
+    ) -> Option<Option<BitSet<Local>>> {
+        let contexts = self.contexts.borrow();
+        if let Some(state) = contexts.get(key) {
+            return Some(state.clone());
+        }
+        None
+    }
+
     fn t_visit_source_destination(&mut self, destination: &Option<(Place, BasicBlock)>) {
         if let Some((place, _)) = destination {
-            self.state.mark_tainted(place.local);
+            self.state.set_taint(place.local, true);
         }
     }
 
     fn t_visit_sanitizer_destination(&mut self, destination: &Option<(Place, BasicBlock)>) {
         if let Some((place, _)) = destination {
-            self.state.mark_untainted(place.local);
+            self.state.set_taint(place.local, false);
         }
     }
 
     fn t_visit_sink(&mut self, name: String, args: &[Operand], span: &Span) {
         if args.iter().map(|op| op.place()).any(|el| {
             if let Some(place) = el {
-                self.state.is_tainted(place.local)
+                self.state.get_taint(place.local)
             } else {
                 false
             }
