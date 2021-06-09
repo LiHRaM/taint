@@ -351,10 +351,7 @@ where
         key: &(DefId, Vec<Option<bool>>),
     ) -> Option<Option<BitSet<Local>>> {
         let contexts = self.contexts.borrow();
-        if let Some(state) = contexts.get(key) {
-            return Some(state.clone());
-        }
-        None
+        contexts.get(key).map(|res| res.clone())
     }
 
     fn t_visit_source_destination(&mut self, destination: &Option<(Place, BasicBlock)>) {
