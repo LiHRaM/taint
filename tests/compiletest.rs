@@ -23,19 +23,18 @@ fn get_target() -> String {
 }
 
 fn get_host() -> String {
-    let command = std::process::Command::new(taint_driver_path());
+    let command = std::process::Command::new(taint_path());
     let version_meta = rustc_version::VersionMeta::for_command(command)
         .expect("failed to parse rustc version info");
     version_meta.host
 }
 
-fn target_dir() -> String {
-    let target_dir = option_env!("CARGO_TARGET_DIR").unwrap_or("target");
-    format!("{}/debug/taint", target_dir)
-}
-
-fn taint_driver_path() -> PathBuf {
-    PathBuf::from(option_env!("RUSTC_PATH").unwrap_or(&target_dir()))
+/// Get the path of the taint executable.
+/// You can set a custom location by setting the `TAINT` environment variable.
+/// Otherwise, we will get the information from the `CARGO_BIN_EXE_<bin>` name,
+/// as documented in: https://doc.rust-lang.org/cargo/reference/environment-variables.html.
+fn taint_path() -> PathBuf {
+    PathBuf::from(option_env!("TAINT").unwrap_or(env!("CARGO_BIN_EXE_taint")))
 }
 
 fn run_compile_pass(path: &str, target: &str) {
@@ -101,7 +100,7 @@ fn get_config(
     let mut config = compiletest::Config::default().tempdir();
     config.mode = mode;
     config.src_base = PathBuf::from(path);
-    config.rustc_path = taint_driver_path();
+    config.rustc_path = taint_path();
     config.filters = env::args().nth(1).into_iter().collect();
     config.host = get_host();
     config.target = target.to_owned();
