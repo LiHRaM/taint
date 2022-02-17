@@ -11,10 +11,11 @@ fn test_runner() {
     env::set_var("TAINT_ENV_VAR_TEST", "0");
     env::set_var("TAINT_TEMP", env::temp_dir());
     env::set_var("RUST_BACKTRACE", "1");
-
+    
     let target = get_target();
-    passes("tests/passes", &target);
-    fails("tests/fails", &target);
+
+    run_compile_pass("tests/passes", &target);
+    run_compile_fail("tests/fails", &target);
 }
 
 fn get_target() -> String {
@@ -28,11 +29,16 @@ fn get_host() -> String {
     version_meta.host
 }
 
-fn taint_driver_path() -> PathBuf {
-    PathBuf::from(option_env!("RUSTC_PATH").unwrap_or("target/debug/taint"))
+fn target_dir() -> String {
+    let target_dir = option_env!("CARGO_TARGET_DIR").unwrap_or("target");
+    format!("{}/debug/taint", target_dir)
 }
 
-fn passes(path: &str, target: &str) {
+fn taint_driver_path() -> PathBuf {
+    PathBuf::from(option_env!("RUSTC_PATH").unwrap_or(&target_dir()))
+}
+
+fn run_compile_pass(path: &str, target: &str) {
     eprintln!(
         "{}",
         format!(
@@ -46,7 +52,7 @@ fn passes(path: &str, target: &str) {
     run_tests(TestMode::Ui, path, target);
 }
 
-fn fails(path: &str, target: &str) {
+fn run_compile_fail(path: &str, target: &str) {
     eprintln!(
         "{}",
         format!(
