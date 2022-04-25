@@ -8,8 +8,9 @@ use rustc_hir::def_id::DefId;
 use rustc_index::bit_set::BitSet;
 use rustc_middle::{
     mir::{
-        visit::Visitor, BasicBlock, Body, Constant, HasLocalDecls, Local, Location, Operand, Place,
-        Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
+        traversal::reverse_postorder, visit::Visitor, BasicBlock, Body, Constant, HasLocalDecls,
+        Local, Location, Operand, Place, Rvalue, Statement, StatementKind, Terminator,
+        TerminatorKind,
     },
     ty::{TyCtxt, TyKind},
 };
@@ -328,7 +329,7 @@ where
                     .iterate_to_fixpoint()
                     .into_results_cursor(target_body);
 
-            let state = if let Some(last) = target_body.basic_blocks().last() {
+            let state = if let Some((last, _)) = reverse_postorder(target_body).last() {
                 results.seek_to_block_end(last);
                 Some(results.get().clone())
             } else {
