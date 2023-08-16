@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use rustc_index::{bit_set::BitSet, vec::Idx};
+use rustc_index::{bit_set::BitSet, Idx};
 use rustc_middle::mir::{Local, Place};
 use tracing::instrument;
 

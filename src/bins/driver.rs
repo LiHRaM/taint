@@ -14,13 +14,14 @@ use hir::def_id::LOCAL_CRATE;
 use rustc_driver::Compilation;
 use rustc_hir as hir;
 use rustc_middle::ty::TyCtxt;
-use rustc_session::config::ErrorOutputType;
+use rustc_session::{config::ErrorOutputType, EarlyErrorHandler};
 use taint::eval;
 use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
 
 fn main() {
-    rustc_driver::install_ice_hook();
-    rustc_driver::init_rustc_env_logger();
+    // TODO/FIXME: Get those working!
+    //rustc_driver::install_ice_hook();
+    //rustc_driver::init_rustc_env_logger();
     init_tracing();
 
     let mut rustc_args: Vec<String> = vec![];
@@ -89,6 +90,7 @@ impl rustc_driver::Callbacks for TaintCompilerCallbacks {
     /// All the work we do happens after analysis, so that we can make assumptions about the validity of the MIR.
     fn after_analysis<'tcx>(
         &mut self,
+        _handler: &EarlyErrorHandler,
         compiler: &rustc_interface::interface::Compiler,
         queries: &'tcx rustc_interface::Queries<'tcx>,
     ) -> Compilation {
@@ -104,19 +106,20 @@ fn enter_with_fn<'tcx, TyCtxtFn>(queries: &'tcx rustc_interface::Queries<'tcx>, 
 where
     TyCtxtFn: Fn(TyCtxt),
 {
-    queries.global_ctxt().unwrap().peek_mut().enter(enter_fn);
+    queries.global_ctxt().unwrap().enter(enter_fn);
 }
 
 /// Perform the taint analysis.
 fn mir_analysis(tcx: TyCtxt) {
-    let (entry_def_id, _) = if let Some((entry_def, x)) = tcx.entry_fn(LOCAL_CRATE) {
+    let (entry_def_id, _) = if let Some((entry_def, x)) = tcx.entry_fn(()) {
         (entry_def, x)
     } else {
         let msg =
             "this tool currently only supports taint analysis on programs with a main function";
-        rustc_session::early_error(ErrorOutputType::default(), msg);
+        //rustc_session::early_error(ErrorOutputType::default(), msg);
+        panic!(msg);
     };
 
-    let main_id = entry_def_id.to_def_id();
+    let main_id = entry_def_id; //.to_def_id();
     main::eval_main(tcx, main_id);
 }

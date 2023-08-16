@@ -1,4 +1,4 @@
-use hir::itemlikevisit::ItemLikeVisitor;
+use hir::intravisit::Visitor;
 use rustc_ast::AttrKind;
 use rustc_hir as hir;
 use rustc_hir::def_id::DefId;
@@ -52,13 +52,17 @@ impl<'tcx> TaintAttributeFinder<'tcx> {
 
 impl TaintAttributeFinder<'_> {
     fn visit_hir_id(&mut self, item_id: hir::HirId) {
-        let def_id = self.tcx.hir().local_def_id(item_id).to_def_id();
+        //let def_id = self.tcx.hir().local_def_id(item_id).to_def_id();
+        //let def_id = self.tcx.hir().body_owner_def_id(rustc_hir::BodyId { hir_id: item_id }).into(); // panics
+        let def_id = self.tcx.hir().get_parent_item(item_id).into();
+
         let sym_source = Symbol::intern("source");
         let sym_sink = Symbol::intern("sink");
         let sym_sanitizer = Symbol::intern("sanitizer");
         let attrs = self.tcx.hir().attrs(item_id);
         for attr in attrs {
-            if let AttrKind::Normal(ref item, _) = attr.kind {
+            if let AttrKind::Normal(ref kind) = attr.kind {
+                let item = &kind.item;
                 if let Some(symbol) = get_taint_attr(item) {
                     if symbol == &sym_source {
                         self.info.sources.push(def_id)
@@ -70,8 +74,8 @@ impl TaintAttributeFinder<'_> {
                         self.tcx.sess.emit_err(InvalidVariant {
                             attr_name: symbol.to_ident_string(),
                             span: item.span(),
-                        })
-                    }
+                        });
+                    };
                     break;
                 }
             }
@@ -79,7 +83,7 @@ impl TaintAttributeFinder<'_> {
     }
 }
 
-impl<'v> ItemLikeVisitor<'v> for TaintAttributeFinder<'_> {
+impl<'v> Visitor<'v> for TaintAttributeFinder<'_> {
     fn visit_item(&mut self, item: &'v rustc_hir::Item<'_>) {
         self.visit_hir_id(item.hir_id());
     }
