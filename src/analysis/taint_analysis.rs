@@ -4,6 +4,7 @@ use std::{
     rc::Rc,
 };
 
+use rustc_errors::struct_span_err;
 use rustc_hir::def_id::DefId;
 use rustc_index::bit_set::BitSet;
 use rustc_middle::{
@@ -153,7 +154,7 @@ impl<'tcx, 'inter, 'intra> Analysis<'intra> for TaintAnalysis<'tcx, 'inter> {
     }
 }
 
-impl<'tcx> std::fmt::Debug for TransferFunction<'_, '_, '_> {
+impl std::fmt::Debug for TransferFunction<'_, '_, '_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!("{:?}", &self.state))
     }
@@ -242,7 +243,7 @@ where
             Rvalue::NullaryOp(_, _) => {}
             Rvalue::Discriminant(_) => {}
             Rvalue::Aggregate(_, _) => {}
-            Rvalue::ShallowInitBox(_, _) | Rvalue::CopyForDeref(_) => todo!()
+            Rvalue::ShallowInitBox(_, _) | Rvalue::CopyForDeref(_) => {}
         }
     }
 
@@ -351,7 +352,7 @@ where
         key: &(DefId, Vec<Option<bool>>),
     ) -> Option<Option<BitSet<Local>>> {
         let contexts = self.contexts.borrow();
-        contexts.get(key).map(|res| res.clone())
+        contexts.get(key).cloned()
     }
 
     fn t_visit_source_destination(&mut self, destination: &Place) {
@@ -370,10 +371,8 @@ where
                 false
             }
         }) {
-            self.tcx.sess.emit_err(super::errors::TaintedSink {
-                fn_name: name,
-                span: *span,
-            });
+            struct_span_err!(self.tcx.sess, *span, T0001, "function `{}` received tainted input", name)
+                .emit();
         }
     }
 }

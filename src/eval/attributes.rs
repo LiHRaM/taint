@@ -1,11 +1,10 @@
 use hir::intravisit::Visitor;
 use rustc_ast::AttrKind;
+use rustc_errors::struct_span_err;
 use rustc_hir as hir;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 use rustc_span::Symbol;
-
-use crate::errors::InvalidVariant;
 
 /// Find all attributes in a crate which originate from the `taint` tool.
 pub struct TaintAttributeFinder<'tcx> {
@@ -52,13 +51,11 @@ impl<'tcx> TaintAttributeFinder<'tcx> {
 
 impl TaintAttributeFinder<'_> {
     fn visit_hir_id(&mut self, item_id: hir::HirId) {
-        //let def_id = self.tcx.hir().local_def_id(item_id).to_def_id();
-        //let def_id = self.tcx.hir().body_owner_def_id(rustc_hir::BodyId { hir_id: item_id }).into(); // panics
-        let def_id = self.tcx.hir().get_parent_item(item_id).into();
-
         let sym_source = Symbol::intern("source");
         let sym_sink = Symbol::intern("sink");
         let sym_sanitizer = Symbol::intern("sanitizer");
+
+        let def_id = item_id.owner.to_def_id();
         let attrs = self.tcx.hir().attrs(item_id);
         for attr in attrs {
             if let AttrKind::Normal(ref kind) = attr.kind {
@@ -71,10 +68,7 @@ impl TaintAttributeFinder<'_> {
                     } else if symbol == &sym_sanitizer {
                         self.info.sanitizers.push(def_id)
                     } else {
-                        self.tcx.sess.emit_err(InvalidVariant {
-                            attr_name: symbol.to_ident_string(),
-                            span: item.span(),
-                        });
+                        struct_span_err!(self.tcx.sess, item.span(), T0002, "Taint attribute `{}` is invalid. We currently only support `source`, `sink`, and `sanitizer`", symbol.to_ident_string()).emit();
                     };
                     break;
                 }

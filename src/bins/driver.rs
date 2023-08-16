@@ -10,18 +10,15 @@ extern crate rustc_session;
 extern crate rustc_span;
 
 use eval::main;
-use hir::def_id::LOCAL_CRATE;
 use rustc_driver::Compilation;
-use rustc_hir as hir;
 use rustc_middle::ty::TyCtxt;
 use rustc_session::{config::ErrorOutputType, EarlyErrorHandler};
 use taint::eval;
 use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
 
 fn main() {
-    // TODO/FIXME: Get those working!
-    //rustc_driver::install_ice_hook();
-    //rustc_driver::init_rustc_env_logger();
+    rustc_driver::install_ice_hook("https://github.com/LiHRaM/taint/issues", |_| ());
+    rustc_driver::init_rustc_env_logger(&EarlyErrorHandler::new(ErrorOutputType::default()));
     init_tracing();
 
     let mut rustc_args: Vec<String> = vec![];
@@ -111,15 +108,10 @@ where
 
 /// Perform the taint analysis.
 fn mir_analysis(tcx: TyCtxt) {
-    let (entry_def_id, _) = if let Some((entry_def, x)) = tcx.entry_fn(()) {
-        (entry_def, x)
+    if let Some((entry_def_id, _)) = tcx.entry_fn(()) {
+        main::eval_main(tcx, entry_def_id);
     } else {
-        let msg =
-            "this tool currently only supports taint analysis on programs with a main function";
-        //rustc_session::early_error(ErrorOutputType::default(), msg);
-        panic!(msg);
-    };
-
-    let main_id = entry_def_id; //.to_def_id();
-    main::eval_main(tcx, main_id);
+        tcx.sess.struct_err("no main function found").emit();
+        tcx.sess.abort_if_errors();
+    }
 }
