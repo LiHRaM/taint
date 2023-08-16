@@ -4,6 +4,7 @@ use std::{
     rc::Rc,
 };
 
+use rustc_errors::struct_span_err;
 use rustc_hir::def_id::DefId;
 use rustc_index::bit_set::BitSet;
 use rustc_middle::{
@@ -15,7 +16,7 @@ use rustc_middle::{
     ty::{TyCtxt, TyKind},
 };
 
-use rustc_mir::dataflow::{Analysis, AnalysisDomain, Forward};
+use rustc_mir_dataflow::{Analysis, AnalysisDomain, Forward, CallReturnPlaces};
 use rustc_span::Span;
 
 use tracing::instrument;
@@ -108,7 +109,7 @@ impl<'inter> AnalysisDomain<'inter> for TaintAnalysis<'_, '_> {
 
 impl<'tcx, 'inter, 'intra> Analysis<'intra> for TaintAnalysis<'tcx, 'inter> {
     fn apply_statement_effect(
-        &self,
+        &mut self,
         state: &mut Self::Domain,
         statement: &Statement<'intra>,
         location: Location,
@@ -126,7 +127,7 @@ impl<'tcx, 'inter, 'intra> Analysis<'intra> for TaintAnalysis<'tcx, 'inter> {
     }
 
     fn apply_terminator_effect(
-        &self,
+        &mut self,
         state: &mut Self::Domain,
         terminator: &Terminator<'intra>,
         location: Location,
@@ -144,18 +145,16 @@ impl<'tcx, 'inter, 'intra> Analysis<'intra> for TaintAnalysis<'tcx, 'inter> {
     }
 
     fn apply_call_return_effect(
-        &self,
+        &mut self,
         _state: &mut Self::Domain,
         _block: BasicBlock,
-        _func: &Operand<'intra>,
-        _args: &[Operand<'intra>],
-        _return_place: Place<'intra>,
+        _return_place: CallReturnPlaces<'_, 'intra>,
     ) {
         // do nothing
     }
 }
 
-impl<'tcx> std::fmt::Debug for TransferFunction<'_, '_, '_> {
+impl std::fmt::Debug for TransferFunction<'_, '_, '_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!("{:?}", &self.state))
     }
@@ -244,6 +243,7 @@ where
             Rvalue::NullaryOp(_, _) => {}
             Rvalue::Discriminant(_) => {}
             Rvalue::Aggregate(_, _) => {}
+            Rvalue::ShallowInitBox(_, _) | Rvalue::CopyForDeref(_) => {}
         }
     }
 
@@ -252,7 +252,7 @@ where
         &mut self,
         func: &Constant,
         args: &[Operand],
-        destination: &Option<(Place, BasicBlock)>,
+        destination: &Place,
         span: &Span,
     ) {
         let name = func.to_string();
@@ -274,7 +274,7 @@ where
         &mut self,
         args: &[Operand],
         id: &rustc_hir::def_id::DefId,
-        destination: &Option<(Place, BasicBlock)>,
+        destination: &Place,
     ) {
         let init = args
             .iter()
@@ -352,19 +352,15 @@ where
         key: &(DefId, Vec<Option<bool>>),
     ) -> Option<Option<BitSet<Local>>> {
         let contexts = self.contexts.borrow();
-        contexts.get(key).map(|res| res.clone())
+        contexts.get(key).cloned()
     }
 
-    fn t_visit_source_destination(&mut self, destination: &Option<(Place, BasicBlock)>) {
-        if let Some((place, _)) = destination {
-            self.state.set_taint(place.local, true);
-        }
+    fn t_visit_source_destination(&mut self, destination: &Place) {
+        self.state.set_taint(destination.local, true);
     }
 
-    fn t_visit_sanitizer_destination(&mut self, destination: &Option<(Place, BasicBlock)>) {
-        if let Some((place, _)) = destination {
-            self.state.set_taint(place.local, false);
-        }
+    fn t_visit_sanitizer_destination(&mut self, destination: &Place) {
+        self.state.set_taint(destination.local, false);
     }
 
     fn t_visit_sink(&mut self, name: String, args: &[Operand], span: &Span) {
@@ -375,10 +371,8 @@ where
                 false
             }
         }) {
-            self.tcx.sess.emit_err(super::errors::TaintedSink {
-                fn_name: name,
-                span: *span,
-            });
+            struct_span_err!(self.tcx.sess, *span, T0001, "function `{}` received tainted input", name)
+                .emit();
         }
     }
 }

@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use rustc_index::{bit_set::BitSet, vec::Idx};
+use rustc_index::{bit_set::BitSet, Idx};
 use rustc_middle::mir::{Local, Place};
 use tracing::instrument;
 
@@ -61,36 +61,33 @@ impl TaintDomain<Local> for PointsAwareTaintDomain<'_, Local> {
 
 impl PointsAwareTaintDomain<'_, Local> {
     pub(crate) fn add_ref(&mut self, from: &Place, to: &Place) {
-        let set = self.map.entry(from.local).or_insert_with(HashSet::new);
+        let set = self.map.entry(from.local).or_default();
         set.insert(to.local);
     }
 
     fn get_aliases(&mut self, ix: Local) -> HashSet<Local> {
-        let children = {
-            let mut result = HashSet::new();
-            result.insert(ix);
-            let mut previous_size = result.len();
+        let mut result = HashSet::new();
+        result.insert(ix);
+        let mut previous_size = result.len();
 
-            loop {
-                for (key, set) in self.map.iter() {
-                    if result.contains(key) {
-                        for l in set.iter() {
-                            result.insert(*l);
-                        }
+        loop {
+            for (key, set) in self.map.iter() {
+                if result.contains(key) {
+                    for l in set.iter() {
+                        result.insert(*l);
                     }
-                }
-
-                let current_size = result.len();
-                if previous_size != current_size {
-                    previous_size = current_size;
-                } else {
-                    break;
                 }
             }
 
-            result
-        };
-        children
+            let current_size = result.len();
+            if previous_size != current_size {
+                previous_size = current_size;
+            } else {
+                break;
+            }
+        }
+
+        result
     }
 }
 
