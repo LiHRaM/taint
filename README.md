@@ -3,6 +3,8 @@
 This project is a static [taint analysis](https://en.wikipedia.org/wiki/Taint_checking) tool for the Rust programming language.
 We use Rust compiler internals to inspect [MIR](https://rustc-dev-guide.rust-lang.org/mir/), which is an intermediate representation of Rust, useful for [dataflow analysis](https://en.wikipedia.org/wiki/Data-flow_analysis).
 
+If you want to read more on how this works, read the master thesis ["Static Taint Analysis in Rust: Using Rusts Ownership System for Precise Static Analysis"](https://projekter.aau.dk/projekter/files/421583418/Static_Taint_Analysis_in_Rust.pdf) that this code was developed for. The thesis was written by Emil Jørgensen Njor and Hilmar Gústafsson on June 2021.
+
 ## Examples
 
 For examples of how this tool can be used, and what the expected results would be, please have a look at the `tests/` folder.
